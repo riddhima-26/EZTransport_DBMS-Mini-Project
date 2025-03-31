@@ -114,12 +114,12 @@ const Dashboard = () => {
     </div>
   );
   if (error) return <div className="p-6 text-red-500">{error}</div>;
-
+  
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
-          <div>
+        <div>
             <h1 className="text-3xl font-bold text-purple-800">Dashboard</h1>
             <p className="text-gray-600 mt-1">Welcome back, Admin</p>
           </div>
@@ -261,8 +261,8 @@ const Dashboard = () => {
                   }
                 }}
               />
-            </div>
-          </div>
+        </div>
+      </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -315,7 +315,7 @@ const Dashboard = () => {
               <button className="text-purple-600 hover:text-purple-800">
                 <i className="fas fa-ellipsis-v"></i>
               </button>
-            </div>
+    </div>
             <div className="h-80">
               <Bar 
                 data={topRoutesData}
@@ -344,7 +344,7 @@ const Dashboard = () => {
               />
             </div>
           </div>
-        </div>
+      </div>
       </div>
     </div>
   );
