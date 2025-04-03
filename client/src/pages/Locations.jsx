@@ -55,8 +55,8 @@ export default function Locations() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {currentLocations.map((location) => (
-                <tr key={location.id} className="hover:bg-purple-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{location.id}</td>
+                <tr key={location.location_id} className="hover:bg-purple-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{location.location_id}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{location.address}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{location.city}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{location.state}</td>

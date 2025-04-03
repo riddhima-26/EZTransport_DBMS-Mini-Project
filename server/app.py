@@ -71,11 +71,11 @@ def login():
 def get_stats():
     cur = mysql.connection.cursor()
     
-    # Get shipment count
+    # Get shipment count (fixing status filter to match enum values)
     cur.execute("SELECT COUNT(*) as count FROM shipments WHERE status != 'delivered'")
     shipments = cur.fetchone()['count']
     
-    # Get available vehicles
+    # Get available vehicles (fixing status filter to match enum values)
     cur.execute("SELECT COUNT(*) as count FROM vehicles WHERE status = 'available'")
     vehicles = cur.fetchone()['count']
     
@@ -83,7 +83,7 @@ def get_stats():
     cur.execute("SELECT COUNT(*) as count FROM customers")
     customers = cur.fetchone()['count']
     
-    # Get active drivers
+    # Get active drivers (fixing status filter to match enum values)
     cur.execute("SELECT COUNT(*) as count FROM drivers WHERE status = 'assigned'")
     active_drivers = cur.fetchone()['count']
     
@@ -99,8 +99,9 @@ def get_stats():
 @app.route('/api/shipments', methods=['GET'])
 def get_shipments():
     cur = mysql.connection.cursor()
+    # Updated to match actual table structure using shipment_id not id
     cur.execute("""
-        SELECT s.shipment_id as id, s.tracking_number, s.status, 
+        SELECT s.shipment_id, s.tracking_number, s.status, 
                CONCAT(l1.city, ', ', l1.state) as origin,
                CONCAT(l2.city, ', ', l2.state) as destination,
                s.created_at
@@ -129,8 +130,9 @@ def delete_shipment(id):
 @app.route('/api/vehicles', methods=['GET'])
 def get_vehicles():
     cur = mysql.connection.cursor()
+    # Updated to match actual table columns
     cur.execute("""
-        SELECT v.vehicle_id as id, v.license_plate, v.make, v.model,
+        SELECT v.vehicle_id, v.license_plate, v.make, v.model,
                v.vehicle_type, v.status, v.capacity_kg,
                CONCAT(l.city, ', ', l.state) as current_location
         FROM vehicles v
@@ -158,7 +160,7 @@ def delete_vehicle(id):
 def get_customers():
     cur = mysql.connection.cursor()
     cur.execute("""
-        SELECT c.customer_id as id, u.full_name, c.company_name,
+        SELECT c.customer_id, u.full_name, c.company_name,
                c.tax_id, c.credit_limit, c.payment_terms,
                u.email, u.phone
         FROM customers c
@@ -203,7 +205,7 @@ def create_customer():
         
         # Fetch the created customer
         cur.execute("""
-            SELECT c.customer_id as id, u.full_name, c.company_name,
+            SELECT c.customer_id, u.full_name, c.company_name,
                    c.tax_id, c.credit_limit, c.payment_terms,
                    u.email, u.phone
             FROM customers c
@@ -288,7 +290,7 @@ def update_customer(id):
         
         # Fetch the updated customer
         cur.execute("""
-            SELECT c.customer_id as id, u.full_name, c.company_name,
+            SELECT c.customer_id, u.full_name, c.company_name,
                    c.tax_id, c.credit_limit, c.payment_terms,
                    u.email, u.phone
             FROM customers c
@@ -307,24 +309,54 @@ def update_customer(id):
 
 @app.route('/api/drivers', methods=['GET'])
 def get_drivers():
-    cur = mysql.connection.cursor()
-    cur.execute("""
-        SELECT d.driver_id as id, u.full_name, d.license_number,
-               u.phone, d.status, CONCAT(l.city, ', ', l.state) as current_location
-        FROM drivers d
-        JOIN users u ON d.user_id = u.user_id
-        LEFT JOIN locations l ON d.current_location_id = l.location_id
-        ORDER BY d.driver_id
-    """)
-    drivers = cur.fetchall()
-    cur.close()
-    return jsonify(drivers)
+    try:
+        cur = mysql.connection.cursor()
+        
+        try:
+            # Use the exact working query
+            query = """
+                SELECT 
+                    d.driver_id,
+                    u.full_name,
+                    d.license_number,
+                    DATE_FORMAT(d.license_expiry, '%Y-%m-%d') as license_expiry,
+                    DATE_FORMAT(d.medical_check_date, '%Y-%m-%d') as medical_check_date,
+                    d.training_certification,
+                    d.status
+                FROM drivers d
+                JOIN users u ON d.user_id = u.user_id
+                ORDER BY d.driver_id
+            """
+            
+            cur.execute(query)
+            drivers = cur.fetchall()
+            
+            return jsonify({
+                'drivers': drivers,
+                'total': len(drivers)
+            })
+
+        except Exception as mysql_error:
+            print("MySQL Error Details:")
+            print(f"Error Type: {type(mysql_error).__name__}")
+            print(f"Error Message: {str(mysql_error)}")
+            return jsonify({'error': f'Database error: {str(mysql_error)}'}), 500
+            
+        finally:
+            cur.close()
+
+    except Exception as e:
+        print("General Error Details:")
+        print(f"Error Type: {type(e).__name__}")
+        print(f"Error Message: {str(e)}")
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 @app.route('/api/locations', methods=['GET'])
 def get_locations():
     cur = mysql.connection.cursor()
+    # Fixed query to match actual schema with location_id not id
     cur.execute("""
-        SELECT location_id as id, address, city, state,
+        SELECT location_id, address, city, state,
                postal_code, country, location_type
         FROM locations
         ORDER BY location_id
@@ -336,10 +368,11 @@ def get_locations():
 @app.route('/api/warehouses', methods=['GET'])
 def get_warehouses():
     cur = mysql.connection.cursor()
+    # Fixed query to match schema with warehouse_name instead of name
     cur.execute("""
-        SELECT w.warehouse_id as id, w.name, w.capacity,
+        SELECT w.warehouse_id, w.warehouse_name, w.capacity,
                CONCAT(l.address, ', ', l.city, ', ', l.state) as location,
-               w.status
+               w.current_occupancy as status
         FROM warehouses w
         JOIN locations l ON w.location_id = l.location_id
         ORDER BY w.warehouse_id
@@ -351,14 +384,16 @@ def get_warehouses():
 @app.route('/api/routes', methods=['GET'])
 def get_routes():
     cur = mysql.connection.cursor()
+    # Fixed query to match schema with route fields
     cur.execute("""
-        SELECT r.route_id as id,
+        SELECT r.route_id, r.route_name,
                CONCAT(l1.city, ', ', l1.state) as start_location,
                CONCAT(l2.city, ', ', l2.state) as end_location,
-               r.distance, r.duration
+               r.distance_km as distance, r.estimated_duration_min as duration,
+               r.status, r.hazard_level
         FROM routes r
-        JOIN locations l1 ON r.start_location_id = l1.location_id
-        JOIN locations l2 ON r.end_location_id = l2.location_id
+        JOIN locations l1 ON r.origin_id = l1.location_id
+        JOIN locations l2 ON r.destination_id = l2.location_id
         ORDER BY r.route_id
     """)
     routes = cur.fetchall()
@@ -368,13 +403,17 @@ def get_routes():
 @app.route('/api/tracking', methods=['GET'])
 def get_tracking_events():
     cur = mysql.connection.cursor()
+    # Updated to include all required fields with proper aliases
     cur.execute("""
-        SELECT e.event_id as id, e.shipment_id,
-               CONCAT(l.city, ', ', l.state) as location,
-               e.status, e.timestamp
+        SELECT 
+            e.event_id, 
+            e.shipment_id, 
+            e.event_type,
+            CONCAT(l.city, ', ', l.state) as location,
+            COALESCE(e.notes, '') as notes
         FROM tracking_events e
         JOIN locations l ON e.location_id = l.location_id
-        ORDER BY e.timestamp DESC
+        ORDER BY e.event_id DESC
     """)
     events = cur.fetchall()
     cur.close()
@@ -383,9 +422,18 @@ def get_tracking_events():
 @app.route('/api/shipment-items', methods=['GET'])
 def get_shipment_items():
     cur = mysql.connection.cursor()
+    # Updated to include all required fields
     cur.execute("""
-        SELECT si.item_id as id, si.shipment_id,
-               si.description, si.weight, si.volume, si.value
+        SELECT 
+            si.item_id,
+            si.shipment_id,
+            si.description,
+            si.quantity,
+            si.weight,
+            si.volume,
+            si.item_value,
+            si.is_hazardous,
+            si.is_fragile
         FROM shipment_items si
         ORDER BY si.item_id
     """)

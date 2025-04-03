@@ -17,7 +17,7 @@ export default function Sidebar() {
         </h2>
       </div>
       
-      <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-purple-300 scrollbar-track-purple-100 hover:scrollbar-thumb-purple-400">
+      <div className="flex-1 overflow-y-auto sidebar-scroll">
         <nav className="mt-5 px-2">
           <div className="space-y-1">
             <Link 

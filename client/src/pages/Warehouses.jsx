@@ -25,7 +25,6 @@ export default function Warehouses() {
     fetchData();
   }, []);
 
-  const totalPages = Math.ceil(data.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const currentData = data.slice(startIndex, endIndex);
@@ -43,22 +42,20 @@ export default function Warehouses() {
             <thead className="bg-purple-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">ID</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Name</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Capacity</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Location</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Current Occupancy</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {currentData.map((warehouse) => (
-                <tr key={warehouse.id} className="hover:bg-purple-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{warehouse.id}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{warehouse.name}</td>
+                <tr key={warehouse.warehouse_id} className="hover:bg-purple-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{warehouse.warehouse_id}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{warehouse.capacity}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{warehouse.location}</td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-2 py-1 text-xs rounded-full ${
-                      warehouse.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      warehouse.status < warehouse.capacity ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                     }`}>
                       {warehouse.status}
                     </span>
@@ -70,7 +67,8 @@ export default function Warehouses() {
         </div>
         <Pagination 
           currentPage={currentPage} 
-          totalPages={totalPages} 
+          totalItems={data.length}
+          itemsPerPage={itemsPerPage}
           onPageChange={setCurrentPage} 
         />
       </div>

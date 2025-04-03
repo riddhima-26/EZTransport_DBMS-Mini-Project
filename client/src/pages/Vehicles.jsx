@@ -33,7 +33,7 @@ export default function Vehicles() {
     if (window.confirm('Are you sure you want to delete this vehicle?')) {
       try {
         await api.delete(`/vehicles/${id}`);
-        setVehicles(vehicles.filter(vehicle => vehicle.id !== id));
+        setVehicles(vehicles.filter(vehicle => vehicle.vehicle_id !== id));
       } catch (err) {
         setError(err);
         setError('Failed to delete vehicle');
@@ -68,8 +68,8 @@ export default function Vehicles() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {currentVehicles.map((vehicle) => (
-                <tr key={vehicle.id} className="hover:bg-purple-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{vehicle.id}</td>
+                <tr key={vehicle.vehicle_id} className="hover:bg-purple-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{vehicle.vehicle_id}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-purple-600">
                     {vehicle.license_plate}
                   </td>
@@ -94,7 +94,7 @@ export default function Vehicles() {
                     </button>
                     <button 
                       className="text-red-600 hover:text-red-900"
-                      onClick={() => handleDelete(vehicle.id)}
+                      onClick={() => handleDelete(vehicle.vehicle_id)}
                     >
                       <i className="fas fa-trash"></i>
                     </button>

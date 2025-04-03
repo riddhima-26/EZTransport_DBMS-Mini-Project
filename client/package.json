@@ -19,6 +19,7 @@
     "react-icons": "^5.5.0",
     "react-particles": "^2.12.2",
     "react-router-dom": "^7.4.1",
+    "react-tsparticles": "^2.12.2",
     "recharts": "^2.15.1",
     "three": "^0.175.0",
     "tsparticles": "^3.8.1"

@@ -44,7 +44,7 @@ export default function Customers() {
     if (window.confirm('Are you sure you want to delete this customer?')) {
       try {
         await api.delete(`/customers/${id}`);
-        setCustomers(customers.filter(customer => customer.id !== id));
+        setCustomers(customers.filter(customer => customer.customer_id !== id));
       } catch (err) {
         console.error('Error details:', err.response?.data || err);
         setError(err.response?.data?.error || 'Failed to delete customer');
@@ -82,9 +82,9 @@ export default function Customers() {
     e.preventDefault();
     try {
       if (editingCustomer) {
-        await api.put(`/customers/${editingCustomer.id}`, formData);
+        await api.put(`/customers/${editingCustomer.customer_id}`, formData);
         setCustomers(customers.map(customer => 
-          customer.id === editingCustomer.id ? { ...customer, ...formData } : customer
+          customer.customer_id === editingCustomer.customer_id ? { ...customer, ...formData } : customer
         ));
       } else {
         const response = await api.post('/customers', formData);
@@ -127,8 +127,8 @@ export default function Customers() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {currentCustomers.map((customer) => (
-                <tr key={customer.id} className="hover:bg-purple-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{customer.id}</td>
+                <tr key={customer.customer_id} className="hover:bg-purple-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{customer.customer_id}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-purple-600">
                     {customer.full_name}
                   </td>
@@ -142,7 +142,7 @@ export default function Customers() {
                       <i className="fas fa-edit"></i>
                     </button>
                     <button 
-                      onClick={() => handleDelete(customer.id)}
+                      onClick={() => handleDelete(customer.customer_id)}
                       className="text-red-600 hover:text-red-900"
                     >
                       <i className="fas fa-trash"></i>

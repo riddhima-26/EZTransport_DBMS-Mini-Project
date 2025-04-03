@@ -33,7 +33,7 @@ export default function Shipments() {
     if (window.confirm('Are you sure you want to delete this shipment?')) {
       try {
         await api.delete(`/shipments/${id}`);
-        setShipments(shipments.filter(shipment => shipment.id !== id));
+        setShipments(shipments.filter(shipment => shipment.shipment_id !== id));
       } catch (err) {
         setError(err);
         setError('Failed to delete shipment');
@@ -68,8 +68,8 @@ export default function Shipments() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {currentShipments.map((shipment) => (
-                <tr key={shipment.id} className="hover:bg-purple-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{shipment.id}</td>
+                <tr key={shipment.shipment_id} className="hover:bg-purple-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{shipment.shipment_id}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-purple-600">
                     {shipment.tracking_number}
                   </td>
@@ -90,7 +90,7 @@ export default function Shipments() {
                     </button>
                     <button 
                       className="text-red-600 hover:text-red-900"
-                      onClick={() => handleDelete(shipment.id)}
+                      onClick={() => handleDelete(shipment.shipment_id)}
                     >
                       <i className="fas fa-trash"></i>
                     </button>

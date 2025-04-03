@@ -13,6 +13,9 @@ export default function Pagination({ currentPage, totalItems, itemsPerPage, onPa
 
   const pages = Array.from({ length: endPage - startPage + 1 }, (_, i) => startPage + i);
 
+  // Don't show pagination if there's only one page
+  if (totalPages <= 1) return null;
+
   return (
     <div className="flex items-center justify-between px-4 py-3 bg-white border-t border-purple-200 sm:px-6">
       <div className="flex justify-between flex-1 sm:hidden">
