@@ -3,9 +3,7 @@ from flask_cors import CORS
 from flask_mysqldb import MySQL
 import os
 from datetime import datetime
-import jwt
 from datetime import datetime, timedelta
-import bcrypt
 
 app = Flask(__name__)
 CORS(app)
@@ -17,9 +15,7 @@ app.config['MYSQL_PASSWORD'] = 'Admin@Secure123'  # your password
 app.config['MYSQL_DB'] = 'transport_logistics'  # your database name
 app.config['MYSQL_CURSORCLASS'] = 'DictCursor'  # Important for getting dictionaries
 
-# JWT Configuration
-app.config['JWT_SECRET_KEY'] = 'your-secret-key'  # Change this to a secure secret key
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
+
 
 mysql = MySQL(app)
 
@@ -1631,6 +1627,115 @@ def delete_warehouse(id):
     
     except Exception as e:
         mysql.connection.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close()
+
+# Customer-specific endpoints
+@app.route('/api/customer/<int:customer_id>/shipments', methods=['GET'])
+def get_customer_shipments(customer_id):
+    cur = mysql.connection.cursor()
+    try:
+        # Get shipments for a specific customer
+        cur.execute("""
+            SELECT s.shipment_id, s.tracking_number, s.status, 
+                   CONCAT(l1.city, ', ', l1.state) as origin,
+                   CONCAT(l2.city, ', ', l2.state) as destination,
+                   s.created_at, s.pickup_date, s.estimated_delivery, s.actual_delivery
+            FROM shipments s
+            JOIN locations l1 ON s.origin_id = l1.location_id
+            JOIN locations l2 ON s.destination_id = l2.location_id
+            WHERE s.customer_id = %s
+            ORDER BY s.created_at DESC
+        """, (customer_id,))
+        
+        shipments = cur.fetchall()
+        return jsonify(shipments)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close()
+
+# Driver-specific endpoints
+@app.route('/api/driver/<int:driver_id>/shipments', methods=['GET'])
+def get_driver_shipments(driver_id):
+    cur = mysql.connection.cursor()
+    try:
+        # Get shipments assigned to a specific driver
+        cur.execute("""
+            SELECT s.shipment_id, s.tracking_number, s.status, 
+                   CONCAT(l1.city, ', ', l1.state) as origin,
+                   CONCAT(l2.city, ', ', l2.state) as destination,
+                   s.created_at, s.pickup_date, s.estimated_delivery
+            FROM shipments s
+            JOIN locations l1 ON s.origin_id = l1.location_id
+            JOIN locations l2 ON s.destination_id = l2.location_id
+            WHERE s.driver_id = %s
+            ORDER BY s.created_at DESC
+        """, (driver_id,))
+        
+        shipments = cur.fetchall()
+        return jsonify(shipments)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close()
+
+# Get tracking events for a specific shipment
+@app.route('/api/shipment/<int:shipment_id>/tracking', methods=['GET'])
+def get_shipment_tracking(shipment_id):
+    cur = mysql.connection.cursor()
+    try:
+        # Get all tracking events for a shipment
+        cur.execute("""
+            SELECT e.event_id, e.event_type, CONCAT(l.city, ', ', l.state) as location,
+                   e.event_timestamp, u.full_name as recorded_by, e.notes
+            FROM tracking_events e
+            LEFT JOIN locations l ON e.location_id = l.location_id
+            LEFT JOIN users u ON e.recorded_by = u.user_id
+            WHERE e.shipment_id = %s
+            ORDER BY e.event_timestamp DESC
+        """, (shipment_id,))
+        
+        events = cur.fetchall()
+        return jsonify(events)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close()
+
+# Add a new endpoint to search shipments by tracking number
+@app.route('/api/shipments/tracking/<tracking_number>', methods=['GET'])
+def get_shipment_by_tracking(tracking_number):
+    cur = mysql.connection.cursor()
+    try:
+        # Get shipment by tracking number
+        cur.execute("""
+            SELECT s.shipment_id, s.tracking_number, s.status, 
+                   CONCAT(l1.city, ', ', l1.state) as origin,
+                   CONCAT(l2.city, ', ', l2.state) as destination,
+                   s.created_at, s.pickup_date, s.estimated_delivery, s.actual_delivery,
+                   c.customer_id, u.full_name as customer_name,
+                   s.driver_id, du.full_name as driver_name,
+                   s.vehicle_id, v.license_plate as vehicle_plate,
+                   s.total_weight, s.total_volume, s.special_instructions
+            FROM shipments s
+            JOIN locations l1 ON s.origin_id = l1.location_id
+            JOIN locations l2 ON s.destination_id = l2.location_id
+            JOIN customers c ON s.customer_id = c.customer_id
+            JOIN users u ON c.user_id = u.user_id
+            LEFT JOIN drivers d ON s.driver_id = d.driver_id
+            LEFT JOIN users du ON d.user_id = du.user_id
+            LEFT JOIN vehicles v ON s.vehicle_id = v.vehicle_id
+            WHERE s.tracking_number = %s
+        """, (tracking_number,))
+        
+        shipment = cur.fetchone()
+        if not shipment:
+            return jsonify({'success': False, 'error': 'Shipment not found'}), 404
+        
+        return jsonify(shipment)
+    except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close()

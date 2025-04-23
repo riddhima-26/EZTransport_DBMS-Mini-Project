@@ -19,8 +19,14 @@ export default function Login() {
     
     try {
       console.log('Attempting login with:', { username, password });
-      const success = await login(username, password);
-      if (success) {
+      const result = await login(username, password);
+      
+      if (result.success) {
+        // Redirect based on user type
+        const userType = result.userType;
+        console.log('User type:', userType);
+        
+        // Navigate to the appropriate dashboard based on user type
         navigate('/');
       } else {
         setError('Invalid username or password');

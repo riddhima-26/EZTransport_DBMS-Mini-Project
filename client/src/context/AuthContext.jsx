@@ -24,11 +24,12 @@ export function AuthProvider({ children }) {
       console.log('Login response:', response.data);
       
       if (response.data.success) {
-        setUser(response.data.user);
-        localStorage.setItem('user', JSON.stringify(response.data.user));
-        return true;
+        const userData = response.data.user;
+        setUser(userData);
+        localStorage.setItem('user', JSON.stringify(userData));
+        return { success: true, userType: userData.user_type };
       }
-      return false;
+      return { success: false };
     } catch (error) {
       console.error('Login error details:', error.response || error);
       throw error;
@@ -41,8 +42,17 @@ export function AuthProvider({ children }) {
     navigate('/login');
   };
 
+  const hasRole = (requiredRoles) => {
+    if (!user) return false;
+    if (!requiredRoles || requiredRoles.length === 0) return true;
+    
+    // If requiredRoles is a string (single role), convert to array
+    const roles = Array.isArray(requiredRoles) ? requiredRoles : [requiredRoles];
+    return roles.includes(user.user_type);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, hasRole }}>
       {!loading && children}
     </AuthContext.Provider>
   );

@@ -7,7 +7,7 @@ start cmd /k "npm run dev"
 timeout /t 2
 
 cd ../server
-start cmd /k "flask run"
+start cmd /k "call venv\Scripts\activate && python -m flask run"
 
 start http://localhost:5173
 

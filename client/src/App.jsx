@@ -13,6 +13,7 @@ import Warehouses from './pages/Warehouses';
 import RoutesManagement from './pages/RoutesManagement';
 import Tracking from './pages/Tracking';
 import ShipmentItems from './pages/ShipmentItems';
+import Unauthorized from './pages/Unauthorized';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/unauthorized" element={<Unauthorized />} />
           <Route path="/*" element={
             <PrivateRoute>
               <div className="flex min-h-screen">
@@ -27,15 +29,59 @@ function App() {
                 <div className="flex-1 overflow-auto">
                   <Routes>
                     <Route path="/" element={<Dashboard />} />
-                    <Route path="/shipments" element={<Shipments />} />
-                    <Route path="/vehicles" element={<Vehicles />} />
-                    <Route path="/customers" element={<Customers />} />
-                    <Route path="/drivers" element={<Drivers />} />
-                    <Route path="/locations" element={<Locations />} />
-                    <Route path="/warehouses" element={<Warehouses />} />
-                    <Route path="/routes" element={<RoutesManagement />} />
-                    <Route path="/tracking" element={<Tracking />} />
-                    <Route path="/shipment-items" element={<ShipmentItems />} />
+                    
+                    {/* Admin and Driver can access shipments */}
+                    <Route path="/shipments" element={
+                      <PrivateRoute allowedRoles={['admin', 'driver']}>
+                        <Shipments />
+                      </PrivateRoute>
+                    } />
+                    
+                    {/* Admin only routes */}
+                    <Route path="/vehicles" element={
+                      <PrivateRoute allowedRoles={['admin']}>
+                        <Vehicles />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/customers" element={
+                      <PrivateRoute allowedRoles={['admin']}>
+                        <Customers />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/drivers" element={
+                      <PrivateRoute allowedRoles={['admin']}>
+                        <Drivers />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/locations" element={
+                      <PrivateRoute allowedRoles={['admin']}>
+                        <Locations />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/warehouses" element={
+                      <PrivateRoute allowedRoles={['admin']}>
+                        <Warehouses />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/routes" element={
+                      <PrivateRoute allowedRoles={['admin']}>
+                        <RoutesManagement />
+                      </PrivateRoute>
+                    } />
+                    
+                    {/* Driver and Customer can access tracking */}
+                    <Route path="/tracking" element={
+                      <PrivateRoute allowedRoles={['admin', 'driver', 'customer']}>
+                        <Tracking />
+                      </PrivateRoute>
+                    } />
+                    
+                    {/* Admin and Driver can access shipment items */}
+                    <Route path="/shipment-items" element={
+                      <PrivateRoute allowedRoles={['admin', 'driver']}>
+                        <ShipmentItems />
+                      </PrivateRoute>
+                    } />
                   </Routes>
                 </div>
               </div>
