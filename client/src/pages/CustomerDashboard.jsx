@@ -28,21 +28,78 @@ const CustomerDashboard = () => {
   const [trackingNumber, setTrackingNumber] = useState('');
 
   useEffect(() => {
-    const customerId = user?.customer_id;
-    
-    if (!customerId) {
-      setError("Could not identify customer ID. Please log in again.");
-      setLoading(false);
-      return;
-    }
-
     const fetchCustomerData = async () => {
       try {
         setLoading(true);
         
-        // Get customer stats using the new API endpoint
-        const response = await api.get(`/customer/stats/${customerId}`);
-        setStats(response.data);
+        if (!user?.id) {
+          setError("Could not identify user ID. Please log in again.");
+          setLoading(false);
+          return;
+        }
+        
+        // Find customer_id based on user_id
+        try {
+          const customersResponse = await api.get('/api/customers');
+          const customerInfo = customersResponse.data.find(customer => customer.user_id === parseInt(user.id));
+          
+          if (!customerInfo) {
+            setError('Customer information not found');
+            setLoading(false);
+            return;
+          }
+          
+          // Using the new endpoint to get customer stats
+          const statsResponse = await api.get(`/api/customer/stats/${customerInfo.customer_id}`);
+          
+          if (statsResponse?.data) {
+            const data = statsResponse.data;
+            
+            // Format data for the component
+            setStats({
+              basicStats: {
+                total_shipments: data.stats?.total_shipments || 0,
+                pending_shipments: data.stats?.pending || 0,
+                transit_shipments: data.stats?.in_transit || 0,
+                delivered_shipments: data.stats?.delivered || 0,
+                returned_shipments: data.stats?.returned || 0,
+                total_value: data.stats?.total_value || 0
+              },
+              monthlyData: data.monthlyData || [],
+              recentShipments: data.recentShipments || []
+            });
+          }
+        } catch (statsError) {
+          console.error('Error fetching customer stats:', statsError);
+          setError('Could not load your dashboard. Please try again later.');
+          
+          // Fallback to basic shipment data
+          try {
+            // Using the modified shipments endpoint that respects user roles
+            const shipmentsResponse = await api.get('/api/shipments', {
+              params: { user_id: user.id, user_type: 'customer' }
+            });
+            
+            const customerShipments = shipmentsResponse.data || [];
+            
+            setStats({
+              basicStats: {
+                total_shipments: customerShipments.length,
+                pending_shipments: customerShipments.filter(s => s.status === 'pending').length,
+                transit_shipments: customerShipments.filter(s => s.status === 'in_transit').length,
+                delivered_shipments: customerShipments.filter(s => s.status === 'delivered').length,
+                returned_shipments: customerShipments.filter(s => s.status === 'returned').length,
+                total_value: 0
+              },
+              monthlyData: [],
+              recentShipments: customerShipments
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                .slice(0, 5)
+            });
+          } catch (shipmentError) {
+            console.error('Error fetching customer shipments:', shipmentError);
+          }
+        }
         
         setLoading(false);
       } catch (err) {

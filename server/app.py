@@ -520,20 +520,50 @@ def get_stats():
 @app.route('/api/shipments', methods=['GET'])
 def get_shipments():
     cur = mysql.connection.cursor()
-    # Updated to match actual table structure using shipment_id not id
-    cur.execute("""
-        SELECT s.shipment_id, s.tracking_number, s.status, 
-               CONCAT(l1.city, ', ', l1.state) as origin,
-               CONCAT(l2.city, ', ', l2.state) as destination,
-               s.created_at
-        FROM shipments s
-        JOIN locations l1 ON s.origin_id = l1.location_id
-        JOIN locations l2 ON s.destination_id = l2.location_id
-        ORDER BY s.created_at DESC
-    """)
-    shipments = cur.fetchall()
-    cur.close()
-    return jsonify(shipments)
+    try:
+        # Get user information from request
+        user_id = request.args.get('user_id')
+        user_type = request.args.get('user_type')
+        
+        query = """
+            SELECT s.shipment_id, s.tracking_number, s.status, 
+                   CONCAT(l1.city, ', ', l1.state) as origin,
+                   CONCAT(l2.city, ', ', l2.state) as destination,
+                   s.created_at, c.company_name as customer_name, 
+                   COALESCE(u.full_name, 'Unassigned') as driver_name
+            FROM shipments s
+            JOIN locations l1 ON s.origin_id = l1.location_id
+            JOIN locations l2 ON s.destination_id = l2.location_id
+            JOIN customers c ON s.customer_id = c.customer_id
+            LEFT JOIN drivers d ON s.driver_id = d.driver_id
+            LEFT JOIN users u ON d.user_id = u.user_id
+        """
+        
+        params = []
+        
+        # Filter based on user role
+        if user_type == 'driver' and user_id:
+            # For drivers, only show shipments assigned to them
+            query += " JOIN drivers dr ON s.driver_id = dr.driver_id WHERE dr.user_id = %s"
+            params.append(user_id)
+        elif user_type == 'customer' and user_id:
+            # For customers, only show shipments belonging to them
+            query += " JOIN customers cu ON s.customer_id = cu.customer_id WHERE cu.user_id = %s"
+            params.append(user_id)
+            
+        query += " ORDER BY s.created_at DESC"
+        
+        if params:
+            cur.execute(query, params)
+        else:
+            cur.execute(query)
+            
+        shipments = cur.fetchall()
+        cur.close()
+        return jsonify(shipments)
+    except Exception as e:
+        cur.close()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/shipments/<int:id>', methods=['DELETE'])
 def delete_shipment(id):
@@ -862,25 +892,30 @@ def get_shipment_events(id):
 @app.route('/api/vehicles', methods=['GET'])
 def get_vehicles():
     cur = mysql.connection.cursor()
-    # Fixed query with backticks around field names to prevent reserved word conflicts
-    cur.execute("""
-        SELECT 
-            v.vehicle_id, 
-            v.license_plate, 
-            v.make, 
-            v.model, 
-            v.year, 
-            v.vehicle_type, 
-            v.status, 
-            v.capacity_kg,
-            CONCAT(l.city, ', ', l.state) as current_location
-        FROM vehicles v
-        LEFT JOIN locations l ON v.current_location_id = l.location_id
-        ORDER BY v.vehicle_id
-    """)
-    vehicles = cur.fetchall()
-    cur.close()
-    return jsonify(vehicles)
+    try:
+        # Get basic vehicle information with location details
+        query = """
+            SELECT 
+                v.vehicle_id, v.license_plate, 
+                v.make, v.model, v.year,
+                v.capacity_kg, v.vehicle_type, v.status,
+                v.last_inspection_date,
+                COALESCE(CONCAT(l.city, ', ', l.state), 'Unknown') as current_location
+            FROM 
+                vehicles v
+            LEFT JOIN 
+                locations l ON v.current_location_id = l.location_id
+            ORDER BY 
+                v.vehicle_id ASC
+        """
+        
+        cur.execute(query)
+        vehicles = cur.fetchall()
+        cur.close()
+        return jsonify(vehicles)
+    except Exception as e:
+        cur.close()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/vehicles/<int:id>', methods=['DELETE'])
 def delete_vehicle(id):
@@ -1264,20 +1299,24 @@ def delete_driver(id):
 def get_locations():
     cur = mysql.connection.cursor()
     try:
+        # Get all locations with additional info
         cur.execute("""
-            SELECT location_id, address, city, state, country, postal_code, 
-                   latitude, longitude, location_type
-            FROM locations
-            ORDER BY city, state
+            SELECT 
+                l.location_id, l.address, l.city, l.state, 
+                l.country, l.postal_code, l.location_type,
+                l.latitude, l.longitude
+            FROM 
+                locations l
+            ORDER BY 
+                l.city ASC, l.state ASC
         """)
         
         locations = cur.fetchall()
-        return jsonify(locations)
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
         cur.close()
+        return jsonify(locations)
+    except Exception as e:
+        cur.close()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/warehouses', methods=['GET'])
 def get_warehouses():
@@ -2164,6 +2203,501 @@ def get_shipment_by_tracking(tracking_number):
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close()
+
+@app.route('/api/admin/stats', methods=['GET'])
+def get_admin_stats():
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Complex query 1: Get shipment stats with status distribution using CTEs
+        cur.execute("""
+        WITH ShipmentStatusCounts AS (
+            SELECT 
+                status, 
+                COUNT(*) as count
+            FROM 
+                shipments
+            GROUP BY 
+                status
+        ),
+        TotalCounts AS (
+            SELECT 
+                (SELECT COUNT(*) FROM shipments) as total_shipments,
+                (SELECT COUNT(*) FROM customers) as total_customers,
+                (SELECT COUNT(*) FROM drivers) as total_drivers,
+                (SELECT COUNT(*) FROM vehicles) as total_vehicles
+        )
+        SELECT 
+            tc.total_shipments as totalShipments,
+            tc.total_customers as customers,
+            tc.total_drivers as drivers,
+            tc.total_vehicles as vehicles,
+            COALESCE((SELECT count FROM ShipmentStatusCounts WHERE status = 'pending'), 0) as pending,
+            COALESCE((SELECT count FROM ShipmentStatusCounts WHERE status = 'in_transit'), 0) as inTransit,
+            COALESCE((SELECT count FROM ShipmentStatusCounts WHERE status = 'delivered'), 0) as delivered,
+            COALESCE((SELECT count FROM ShipmentStatusCounts WHERE status = 'returned'), 0) as returned
+        FROM 
+            TotalCounts tc
+        """)
+        
+        stats_result = cur.fetchone()
+        
+        # Complex query 2: Monthly shipment trends with nested query and proper GROUP BY
+        cur.execute("""
+        SELECT 
+            DATE_FORMAT(created_at, '%Y-%m') as month,
+            COUNT(*) as count,
+            SUM(shipment_value) as total_value,
+            (
+                SELECT COUNT(*) 
+                FROM shipments s2 
+                WHERE DATE_FORMAT(s2.created_at, '%Y-%m') = DATE_FORMAT(s1.created_at, '%Y-%m')
+                AND s2.status = 'delivered'
+            ) as delivered_count
+        FROM 
+            shipments s1
+        WHERE 
+            created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
+        GROUP BY 
+            DATE_FORMAT(created_at, '%Y-%m')
+        ORDER BY 
+            month ASC
+        """)
+        
+        monthly_data = cur.fetchall()
+        
+        # Complex query 3: Status distribution with percentages using a derived table
+        cur.execute("""
+        WITH StatusCounts AS (
+            SELECT 
+                status, 
+                COUNT(*) as count
+            FROM 
+                shipments
+            GROUP BY 
+                status
+        ),
+        TotalCount AS (
+            SELECT COUNT(*) as total
+            FROM shipments
+        )
+        SELECT 
+            sc.status,
+            sc.count,
+            ROUND((sc.count / tc.total) * 100, 2) as percentage
+        FROM 
+            StatusCounts sc
+        CROSS JOIN 
+            TotalCount tc
+        ORDER BY 
+            sc.count DESC
+        """)
+        
+        status_distribution = cur.fetchall()
+        
+        cur.close()
+        
+        return jsonify({
+            'totalShipments': stats_result['totalShipments'],
+            'pending': stats_result['pending'],
+            'inTransit': stats_result['inTransit'],
+            'delivered': stats_result['delivered'],
+            'customers': stats_result['customers'],
+            'drivers': stats_result['drivers'],
+            'vehicles': stats_result['vehicles'],
+            'monthlyData': monthly_data,
+            'statusDistribution': status_distribution
+        })
+        
+    except Exception as e:
+        print("Error getting admin stats:", e)
+        return jsonify({'error': str(e)}), 500
+
+# Add after the admin stats endpoint
+@app.route('/api/driver/stats/<int:driver_id>', methods=['GET'])
+def get_driver_stats(driver_id):
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Complex query: Get driver performance metrics
+        cur.execute("""
+        WITH DeliveryStats AS (
+            SELECT 
+                COUNT(*) as total_assigned,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+                SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END) as in_transit,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                AVG(CASE 
+                    WHEN status = 'delivered' AND actual_delivery IS NOT NULL AND estimated_delivery IS NOT NULL
+                    THEN TIMESTAMPDIFF(HOUR, estimated_delivery, actual_delivery)
+                    ELSE NULL
+                END) as avg_delivery_time_diff
+            FROM 
+                shipments
+            WHERE 
+                driver_id = %s
+        ),
+        RecentDeliveries AS (
+            SELECT 
+                shipment_id,
+                tracking_number,
+                status,
+                created_at,
+                pickup_date,
+                estimated_delivery
+            FROM 
+                shipments
+            WHERE 
+                driver_id = %s
+            ORDER BY 
+                created_at DESC
+            LIMIT 5
+        ),
+        PerformanceScore AS (
+            SELECT
+                COUNT(*) as total_deliveries,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as completed_deliveries,
+                (
+                    SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) / 
+                    CASE WHEN COUNT(*) > 0 THEN COUNT(*) ELSE 1 END
+                ) * 100 as completion_rate,
+                COUNT(DISTINCT DATE(created_at)) as active_days
+            FROM
+                shipments
+            WHERE
+                driver_id = %s AND
+                created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        )
+        SELECT
+            ds.total_assigned,
+            ds.delivered,
+            ds.in_transit,
+            ds.pending,
+            COALESCE(ds.avg_delivery_time_diff, 0) as avg_delivery_time_diff,
+            ps.total_deliveries,
+            ps.completed_deliveries,
+            ps.completion_rate,
+            ps.active_days
+        FROM
+            DeliveryStats ds,
+            PerformanceScore ps
+        """, (driver_id, driver_id, driver_id))
+        
+        stats = cur.fetchone()
+        
+        # Get recent deliveries
+        cur.execute("""
+        SELECT 
+            s.shipment_id, 
+            s.tracking_number, 
+            s.status,
+            CONCAT(l1.city, ', ', l1.state) as origin,
+            CONCAT(l2.city, ', ', l2.state) as destination,
+            s.pickup_date,
+            s.estimated_delivery
+        FROM 
+            shipments s
+        JOIN 
+            locations l1 ON s.origin_id = l1.location_id
+        JOIN 
+            locations l2 ON s.destination_id = l2.location_id
+        WHERE 
+            s.driver_id = %s
+        ORDER BY 
+            s.created_at DESC
+        LIMIT 5
+        """, (driver_id,))
+        
+        recent_deliveries = cur.fetchall()
+        
+        cur.close()
+        
+        return jsonify({
+            'stats': stats,
+            'recentDeliveries': recent_deliveries
+        })
+        
+    except Exception as e:
+        print("Error getting driver stats:", e)
+        return jsonify({'error': str(e)}), 500
+
+# Add a customer stats endpoint
+@app.route('/api/customer/stats/<int:customer_id>', methods=['GET'])
+def get_customer_stats(customer_id):
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Complex query: Get customer shipment statistics
+        cur.execute("""
+        WITH ShipmentStats AS (
+            SELECT 
+                COUNT(*) as total_shipments,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+                SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END) as in_transit,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned,
+                SUM(shipment_value) as total_value
+            FROM 
+                shipments
+            WHERE 
+                customer_id = %s
+        ),
+        MonthlyShipments AS (
+            SELECT 
+                DATE_FORMAT(created_at, '%Y-%m') as month,
+                COUNT(*) as count,
+                SUM(shipment_value) as total_value
+            FROM 
+                shipments
+            WHERE 
+                customer_id = %s AND
+                created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
+            GROUP BY 
+                DATE_FORMAT(created_at, '%Y-%m')
+            ORDER BY 
+                month ASC
+        )
+        SELECT
+            ss.total_shipments,
+            ss.delivered,
+            ss.in_transit,
+            ss.pending,
+            ss.returned,
+            ss.total_value
+        FROM
+            ShipmentStats ss
+        """, (customer_id, customer_id))
+        
+        stats = cur.fetchone()
+        
+        # Get monthly shipment data
+        cur.execute("""
+        SELECT 
+            DATE_FORMAT(created_at, '%Y-%m') as month,
+            COUNT(*) as count,
+            SUM(shipment_value) as total_value
+        FROM 
+            shipments
+        WHERE 
+            customer_id = %s AND
+            created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
+        GROUP BY 
+            DATE_FORMAT(created_at, '%Y-%m')
+        ORDER BY 
+            month ASC
+        """, (customer_id,))
+        
+        monthly_data = cur.fetchall()
+        
+        # Get recent shipments
+        cur.execute("""
+        SELECT 
+            s.shipment_id, 
+            s.tracking_number, 
+            s.status,
+            CONCAT(l1.city, ', ', l1.state) as origin,
+            CONCAT(l2.city, ', ', l2.state) as destination,
+            s.created_at,
+            s.estimated_delivery,
+            s.shipment_value
+        FROM 
+            shipments s
+        JOIN 
+            locations l1 ON s.origin_id = l1.location_id
+        JOIN 
+            locations l2 ON s.destination_id = l2.location_id
+        WHERE 
+            s.customer_id = %s
+        ORDER BY 
+            s.created_at DESC
+        LIMIT 5
+        """, (customer_id,))
+        
+        recent_shipments = cur.fetchall()
+        
+        cur.close()
+        
+        return jsonify({
+            'stats': stats,
+            'monthlyData': monthly_data,
+            'recentShipments': recent_shipments
+        })
+        
+    except Exception as e:
+        print("Error getting customer stats:", e)
+        return jsonify({'error': str(e)}), 500
+
+# Add this new endpoint for driver's upcoming schedule
+@app.route('/api/driver/<int:driver_id>/schedule', methods=['GET'])
+def get_driver_schedule(driver_id):
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Get driver's upcoming scheduled shipments with route details and location info
+        cur.execute("""
+        WITH UpcomingShipments AS (
+            SELECT 
+                s.shipment_id,
+                s.tracking_number,
+                s.status,
+                s.pickup_date,
+                s.estimated_delivery,
+                s.route_id,
+                s.origin_id,
+                s.destination_id
+            FROM 
+                shipments s
+            WHERE 
+                s.driver_id = %s AND
+                (s.status = 'pending' OR s.status = 'picked_up' OR s.status = 'in_transit') AND
+                (s.pickup_date IS NOT NULL)
+            ORDER BY 
+                COALESCE(s.pickup_date, CURRENT_TIMESTAMP)
+        )
+        SELECT 
+            us.shipment_id,
+            us.tracking_number,
+            us.status,
+            us.pickup_date,
+            us.estimated_delivery,
+            r.route_name,
+            r.distance_km,
+            r.estimated_duration_min,
+            orig.address as origin_address,
+            orig.city as origin_city,
+            orig.state as origin_state,
+            orig.postal_code as origin_postal,
+            orig.latitude as origin_lat,
+            orig.longitude as origin_lng,
+            dest.address as dest_address,
+            dest.city as dest_city,
+            dest.state as dest_state,
+            dest.postal_code as dest_postal,
+            dest.latitude as dest_lat,
+            dest.longitude as dest_lng,
+            c.company_name as customer_name,
+            u.full_name as customer_contact,
+            u.phone as customer_phone
+        FROM 
+            UpcomingShipments us
+        JOIN 
+            routes r ON us.route_id = r.route_id
+        JOIN 
+            locations orig ON us.origin_id = orig.location_id
+        JOIN 
+            locations dest ON us.destination_id = dest.location_id
+        JOIN 
+            shipments s ON us.shipment_id = s.shipment_id
+        JOIN 
+            customers c ON s.customer_id = c.customer_id
+        JOIN 
+            users u ON c.user_id = u.user_id
+        ORDER BY 
+            us.pickup_date
+        """, (driver_id,))
+        
+        schedule = cur.fetchall()
+        
+        # Get any waypoints for these routes
+        route_ids = [item['route_id'] for item in schedule if item['route_id'] is not None]
+        
+        waypoints = []
+        if route_ids:
+            placeholders = ','.join(['%s'] * len(route_ids))
+            cur.execute(f"""
+            SELECT 
+                w.waypoint_id,
+                w.route_id,
+                w.sequence_number,
+                w.estimated_arrival,
+                w.estimated_departure,
+                l.location_id,
+                l.address,
+                l.city,
+                l.state,
+                l.postal_code,
+                l.latitude,
+                l.longitude
+            FROM 
+                waypoints w
+            JOIN 
+                locations l ON w.location_id = l.location_id
+            WHERE 
+                w.route_id IN ({placeholders})
+            ORDER BY 
+                w.route_id, w.sequence_number
+            """, route_ids)
+            waypoints = cur.fetchall()
+        
+        cur.close()
+        
+        return jsonify({
+            'schedule': schedule,
+            'waypoints': waypoints
+        })
+        
+    except Exception as e:
+        print("Error getting driver schedule:", e)
+        return jsonify({'error': str(e)}), 500
+
+# Add a new endpoint for drivers to update shipment status
+@app.route('/api/driver/update-shipment-status', methods=['POST'])
+def update_shipment_status():
+    try:
+        data = request.json
+        required_fields = ['shipment_id', 'event_type', 'user_id', 'location_id']
+        
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
+        
+        cur = mysql.connection.cursor()
+        
+        # First, check if the shipment exists and the driver is assigned to it
+        cur.execute("""
+        SELECT s.shipment_id, s.status, s.driver_id, d.user_id 
+        FROM shipments s
+        JOIN drivers d ON s.driver_id = d.driver_id
+        WHERE s.shipment_id = %s
+        """, (data['shipment_id'],))
+        
+        shipment = cur.fetchone()
+        
+        if not shipment:
+            cur.close()
+            return jsonify({'success': False, 'error': 'Shipment not found'}), 404
+        
+        if shipment['user_id'] != data['user_id']:
+            cur.close()
+            return jsonify({'success': False, 'error': 'You are not authorized to update this shipment'}), 403
+        
+        # Insert tracking event
+        notes = data.get('notes', f"Status updated to {data['event_type']}")
+        
+        cur.execute("""
+        INSERT INTO tracking_events 
+            (shipment_id, event_type, location_id, recorded_by, notes)
+        VALUES 
+            (%s, %s, %s, %s, %s)
+        """, (
+            data['shipment_id'],
+            data['event_type'],
+            data['location_id'],
+            data['user_id'],
+            notes
+        ))
+        
+        # Update shipment status based on event type
+        update_shipment_status(cur, data['shipment_id'], data['event_type'])
+        
+        mysql.connection.commit()
+        cur.close()
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        print("Error updating shipment status:", e)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

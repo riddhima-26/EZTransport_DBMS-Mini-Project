@@ -9,15 +9,19 @@ const DriverDashboard = () => {
   
   // State for dashboard data
   const [driverStats, setDriverStats] = useState({
-    total_shipments: 0,
-    delivered_shipments: 0,
-    active_shipments: 0, 
-    pending_shipments: 0,
-    driver_status: 'available'
+    total_assigned: 0,
+    delivered: 0,
+    in_transit: 0, 
+    pending: 0,
+    avg_delivery_time_diff: 0,
+    completion_rate: 0,
+    active_days: 0
   });
   const [currentShipment, setCurrentShipment] = useState(null);
   const [upcomingShipments, setUpcomingShipments] = useState([]);
   const [recentDeliveries, setRecentDeliveries] = useState([]);
+  const [schedule, setSchedule] = useState([]);
+  const [waypoints, setWaypoints] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [trackingNumber, setTrackingNumber] = useState('');
@@ -29,67 +33,74 @@ const DriverDashboard = () => {
       try {
         setLoading(true);
         
-        // Get driver's dashboard data from stored procedure
+        if (!user?.id) {
+          setError('User information not available');
+          setLoading(false);
+          return;
+        }
+        
+        // Find driver_id based on user_id
         try {
-          // Using the new endpoint that calls the get_driver_dashboard stored procedure
-          const dashboardResponse = await api.get(`/api/driver/${user.id}/dashboard`);
+          const driversResponse = await api.get('/api/drivers');
+          const driverInfo = driversResponse.data.find(driver => driver.user_id === parseInt(user.id));
           
-          if (dashboardResponse?.data?.length > 0) {
-            // Get basic stats from first result set
-            setDriverStats(dashboardResponse.data[0][0] || {
-              total_shipments: 0,
-              delivered_shipments: 0,
-              active_shipments: 0, 
-              pending_shipments: 0,
-              driver_status: 'available'
+          if (!driverInfo) {
+            setError('Driver information not found');
+            setLoading(false);
+            return;
+          }
+          
+          // Using the new endpoint to get driver stats with real data
+          const statsResponse = await api.get(`/api/driver/stats/${driverInfo.driver_id}`);
+          
+          if (statsResponse?.data) {
+            // Set driver stats from the response
+            setDriverStats(statsResponse.data.stats || {
+              total_assigned: 0,
+              delivered: 0,
+              in_transit: 0, 
+              pending: 0,
+              avg_delivery_time_diff: 0,
+              completion_rate: 0,
+              active_days: 0
             });
             
-            // Get current shipment from second result set
-            if (dashboardResponse.data[1] && dashboardResponse.data[1].length > 0) {
-              setCurrentShipment(dashboardResponse.data[1][0]);
-            }
-            
-            // Get upcoming shipments from third result set
-            if (dashboardResponse.data[2] && dashboardResponse.data[2].length > 0) {
-              setUpcomingShipments(dashboardResponse.data[2]);
-            }
-            
-            // Get recent deliveries from fourth result set
-            if (dashboardResponse.data[3] && dashboardResponse.data[3].length > 0) {
-              setRecentDeliveries(dashboardResponse.data[3]);
-            }
+            // Set recent deliveries
+            setRecentDeliveries(statsResponse.data.recentDeliveries || []);
           }
-        } catch (dashboardError) {
-          console.error('Error fetching driver dashboard:', dashboardError);
+          
+          // Get driver schedule
+          const scheduleResponse = await api.get(`/api/driver/${driverInfo.driver_id}/schedule`);
+          if (scheduleResponse?.data) {
+            setSchedule(scheduleResponse.data.schedule || []);
+            setWaypoints(scheduleResponse.data.waypoints || []);
+          }
+        } catch (statsError) {
+          console.error('Error fetching driver stats:', statsError);
           setError('Could not load your dashboard. Please try again later.');
           
-          // Fallback to basic shipment data if dashboard procedure fails
+          // Fallback to basic shipment data
           try {
-            const shipmentsResponse = await api.get(`/api/driver/${user.id}/shipments`);
+            // Using the modified shipments endpoint that respects user roles
+            const shipmentsResponse = await api.get('/api/shipments', {
+              params: { user_id: user.id, user_type: 'driver' }
+            });
+            
             const assignedShipments = shipmentsResponse.data || [];
             
             setDriverStats({
-              total_shipments: assignedShipments.length,
-              delivered_shipments: assignedShipments.filter(s => s.status === 'delivered').length,
-              active_shipments: assignedShipments.filter(s => s.status === 'in_transit').length,
-              pending_shipments: assignedShipments.filter(s => s.status === 'pending').length,
-              driver_status: 'unknown'
+              total_assigned: assignedShipments.length,
+              delivered: assignedShipments.filter(s => s.status === 'delivered').length,
+              in_transit: assignedShipments.filter(s => s.status === 'in_transit').length,
+              pending: assignedShipments.filter(s => s.status === 'pending').length,
+              avg_delivery_time_diff: 0,
+              completion_rate: 0,
+              active_days: 0
             });
-            
-            const current = assignedShipments.find(s => s.status === 'in_transit');
-            if (current) setCurrentShipment(current);
-            
-            setUpcomingShipments(
-              assignedShipments
-                .filter(s => s.status === 'pending')
-                .sort((a, b) => new Date(a.pickup_date) - new Date(b.pickup_date))
-                .slice(0, 3)
-            );
             
             setRecentDeliveries(
               assignedShipments
-                .filter(s => s.status === 'delivered')
-                .sort((a, b) => new Date(b.actual_delivery || b.estimated_delivery) - new Date(a.actual_delivery || a.estimated_delivery))
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
                 .slice(0, 5)
             );
           } catch (shipmentError) {
@@ -115,9 +126,7 @@ const DriverDashboard = () => {
       }
     };
 
-    if (user?.id) {
-      fetchDriverData();
-    }
+    fetchDriverData();
   }, [user?.id]);
 
   const getStatusClass = (status) => {
@@ -162,29 +171,16 @@ const DriverDashboard = () => {
         notes: `Status updated to ${newStatus} by driver ${user.full_name}`
       });
       
-      // Refresh the dashboard data
-      const dashboardResponse = await api.get(`/api/driver/${user.id}/dashboard`);
+      // Refresh the dashboard data by re-fetching
+      const driversResponse = await api.get('/api/drivers');
+      const driverInfo = driversResponse.data.find(driver => driver.user_id === parseInt(user.id));
       
-      if (dashboardResponse?.data?.length > 0) {
-        // Update all state with new data
-        setDriverStats(dashboardResponse.data[0][0] || driverStats);
+      if (driverInfo) {
+        const statsResponse = await api.get(`/api/driver/stats/${driverInfo.driver_id}`);
         
-        if (dashboardResponse.data[1] && dashboardResponse.data[1].length > 0) {
-          setCurrentShipment(dashboardResponse.data[1][0]);
-        } else {
-          setCurrentShipment(null);
-        }
-        
-        if (dashboardResponse.data[2] && dashboardResponse.data[2].length > 0) {
-          setUpcomingShipments(dashboardResponse.data[2]);
-        } else {
-          setUpcomingShipments([]);
-        }
-        
-        if (dashboardResponse.data[3] && dashboardResponse.data[3].length > 0) {
-          setRecentDeliveries(dashboardResponse.data[3]);
-        } else {
-          setRecentDeliveries([]);
+        if (statsResponse?.data) {
+          setDriverStats(statsResponse.data.stats || driverStats);
+          setRecentDeliveries(statsResponse.data.recentDeliveries || []);
         }
       }
       
@@ -208,7 +204,153 @@ const DriverDashboard = () => {
   };
 
   const viewShipmentDetails = (shipmentId) => {
-    navigate(`/driver/shipments/${shipmentId}`);
+    navigate(`/shipments?id=${shipmentId}`);
+  };
+
+  // Add this section to display the upcoming schedule
+  const renderUpcomingSchedule = () => {
+    if (schedule.length === 0) {
+      return (
+        <div className="bg-indigo-50 rounded-lg p-4 text-center">
+          <p className="text-indigo-500">No upcoming shipments scheduled.</p>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="grid gap-4 mt-2">
+        {schedule.map((shipment) => {
+          // Get waypoints for this route
+          const routeWaypoints = waypoints.filter(wp => wp.route_id === shipment.route_id);
+          
+          return (
+            <div key={shipment.shipment_id} className="bg-white rounded-lg shadow-md border border-indigo-100 overflow-hidden">
+              <div className="p-4 border-b border-indigo-100">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-semibold text-indigo-900">{shipment.route_name}</h3>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusClass(shipment.status)}`}>
+                    {shipment.status.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="text-sm text-gray-600 mt-1">
+                  <span className="font-medium text-indigo-600">#{shipment.tracking_number}</span> • {shipment.customer_name}
+                </div>
+              </div>
+              
+              <div className="p-4">
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <div className="flex items-start mb-3">
+                      <div className="bg-green-100 p-2 rounded-full mr-3 mt-1">
+                        <i className="fas fa-map-marker-alt text-green-600"></i>
+                      </div>
+                      <div>
+                        <p className="text-xs text-indigo-500 font-medium">PICKUP</p>
+                        <p className="font-medium">{shipment.origin_address}</p>
+                        <p className="text-sm text-gray-500">{shipment.origin_city}, {shipment.origin_state} {shipment.origin_postal}</p>
+                        <p className="text-sm text-indigo-600 mt-1">
+                          {shipment.pickup_date ? new Date(shipment.pickup_date).toLocaleString() : 'Not scheduled'}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {routeWaypoints.length > 0 && (
+                      <div className="ml-6 pl-6 border-l-2 border-dashed border-indigo-200">
+                        {routeWaypoints.map(wp => (
+                          <div key={wp.waypoint_id} className="mb-3">
+                            <div className="flex items-start">
+                              <div className="bg-yellow-50 p-1 rounded-full mr-3 mt-1">
+                                <i className="fas fa-circle text-xs text-yellow-400"></i>
+                              </div>
+                              <div>
+                                <p className="text-xs text-yellow-600 font-medium">WAYPOINT {wp.sequence_number}</p>
+                                <p className="font-medium text-sm">{wp.address}</p>
+                                <p className="text-xs text-gray-500">{wp.city}, {wp.state}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    <div className="flex items-start">
+                      <div className="bg-red-100 p-2 rounded-full mr-3 mt-1">
+                        <i className="fas fa-flag-checkered text-red-600"></i>
+                      </div>
+                      <div>
+                        <p className="text-xs text-indigo-500 font-medium">DELIVERY</p>
+                        <p className="font-medium">{shipment.dest_address}</p>
+                        <p className="text-sm text-gray-500">{shipment.dest_city}, {shipment.dest_state} {shipment.dest_postal}</p>
+                        <p className="text-sm text-indigo-600 mt-1">
+                          {shipment.estimated_delivery ? new Date(shipment.estimated_delivery).toLocaleString() : 'Not scheduled'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-indigo-50 rounded-lg p-3">
+                    <h4 className="font-medium text-indigo-800 mb-2">Shipment Details</h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Distance:</span>
+                        <span className="font-medium">{shipment.distance_km} km</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Est. Duration:</span>
+                        <span className="font-medium">{Math.floor(shipment.estimated_duration_min / 60)}h {shipment.estimated_duration_min % 60}m</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Customer:</span>
+                        <span className="font-medium">{shipment.customer_name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Contact:</span>
+                        <span className="font-medium">{shipment.customer_contact}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Phone:</span>
+                        <span className="font-medium">{shipment.customer_phone}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-4 flex gap-2">
+                      <button 
+                        onClick={() => handleTrackShipment(shipment.shipment_id)}
+                        className="bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-3 py-1 rounded text-sm flex-1 transition-colors"
+                      >
+                        Track
+                      </button>
+                      <button 
+                        onClick={() => updateStatus(shipment.shipment_id, 'pickup', shipment.origin_id)}
+                        disabled={shipment.status !== 'pending' || updateLoading}
+                        className={`${
+                          shipment.status === 'pending' && !updateLoading
+                            ? 'bg-yellow-100 hover:bg-yellow-200 text-yellow-800'
+                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        } px-3 py-1 rounded text-sm flex-1 transition-colors`}
+                      >
+                        Pick Up
+                      </button>
+                      <button 
+                        onClick={() => updateStatus(shipment.shipment_id, 'delivery', shipment.dest_id)}
+                        disabled={shipment.status !== 'in_transit' || updateLoading}
+                        className={`${
+                          shipment.status === 'in_transit' && !updateLoading
+                            ? 'bg-green-100 hover:bg-green-200 text-green-800'
+                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        } px-3 py-1 rounded text-sm flex-1 transition-colors`}
+                      >
+                        Deliver
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   if (loading) {
@@ -401,146 +543,83 @@ const DriverDashboard = () => {
         )}
       </div>
 
-      {/* Upcoming Shipments */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-md p-6 border border-indigo-100 mb-6">
-        <h2 className="text-xl font-semibold text-indigo-900 mb-4">Upcoming Pickups</h2>
-        {upcomingShipments.length === 0 ? (
-          <div className="text-center py-6">
-            <div className="text-indigo-300 mb-3">
-              <i className="fas fa-calendar-alt text-5xl"></i>
+      {/* Add new Upcoming Schedule section */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        {/* Col 1-2: Upcoming Schedule */}
+        <div className="lg:col-span-2 bg-white/80 backdrop-blur-sm rounded-xl shadow-md p-6 border border-indigo-100">
+          <h2 className="text-xl font-semibold text-indigo-900 mb-4">
+            <i className="fas fa-calendar-alt mr-2 text-indigo-600"></i>
+            Upcoming Schedule
+          </h2>
+          {renderUpcomingSchedule()}
+        </div>
+        
+        {/* Col 3: Recent Deliveries */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-md p-6 border border-indigo-100">
+          <h2 className="text-xl font-semibold text-indigo-900 mb-4">
+            <i className="fas fa-history mr-2 text-indigo-600"></i>
+            Recent Deliveries
+          </h2>
+          {recentDeliveries.length === 0 ? (
+            <div className="text-center py-6">
+              <div className="text-indigo-300 mb-3">
+                <i className="fas fa-history text-5xl"></i>
+              </div>
+              <p className="text-indigo-500">No delivery history yet.</p>
             </div>
-            <p className="text-indigo-500">No upcoming shipments scheduled.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-indigo-200">
-              <thead className="bg-indigo-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Tracking #
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Route
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Pickup Date
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-indigo-100">
-                {upcomingShipments.map((shipment) => (
-                  <tr key={shipment.shipment_id} className="hover:bg-indigo-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-yellow-600">
-                        {shipment.tracking_number}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-indigo-600">
-                        {shipment.origin} → {shipment.destination}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-indigo-600">
-                        {new Date(shipment.pickup_date).toLocaleString()}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={() => updateStatus(shipment.shipment_id, 'pickup', shipment.origin_id)}
-                          className="bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-3 py-1 rounded text-xs flex items-center"
-                          disabled={updateLoading}
-                        >
-                          {updateLoading ? (
-                            <i className="fas fa-spinner fa-spin mr-1"></i>
-                          ) : (
-                            <i className="fas fa-truck-loading mr-1"></i>
-                          )}
-                          Pickup
-                        </button>
-                        <button
-                          onClick={() => viewShipmentDetails(shipment.shipment_id)}
-                          className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1 rounded text-xs flex items-center"
-                        >
-                          <i className="fas fa-info-circle mr-1"></i>
-                          Details
-                        </button>
-                      </div>
-                    </td>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-indigo-200">
+                <thead className="bg-indigo-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
+                      Tracking #
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
+                      Route
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
+                      Delivery Date
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
+                      Delivery Time
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Recent Deliveries */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-md p-6 border border-indigo-100">
-        <h2 className="text-xl font-semibold text-indigo-900 mb-4">Recent Deliveries</h2>
-        {recentDeliveries.length === 0 ? (
-          <div className="text-center py-6">
-            <div className="text-indigo-300 mb-3">
-              <i className="fas fa-history text-5xl"></i>
-            </div>
-            <p className="text-indigo-500">No delivery history yet.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-indigo-200">
-              <thead className="bg-indigo-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Tracking #
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Route
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Delivery Date
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Delivery Time
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-indigo-100">
-                {recentDeliveries.map((shipment) => (
-                  <tr key={shipment.shipment_id} className="hover:bg-indigo-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-yellow-600">
-                        {shipment.tracking_number}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-indigo-600">
-                        {shipment.origin} → {shipment.destination}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-indigo-600">
-                        {shipment.actual_delivery ? new Date(shipment.actual_delivery).toLocaleDateString() : '-'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {shipment.delivery_time_minutes ? (
-                        <div className="text-sm text-indigo-600">
-                          {Math.floor(shipment.delivery_time_minutes / 60)}h {shipment.delivery_time_minutes % 60}m
+                </thead>
+                <tbody className="bg-white divide-y divide-indigo-100">
+                  {recentDeliveries.map((shipment) => (
+                    <tr key={shipment.shipment_id} className="hover:bg-indigo-50 transition-colors">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-yellow-600">
+                          {shipment.tracking_number}
                         </div>
-                      ) : (
-                        <div className="text-sm text-gray-500">-</div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-indigo-600">
+                          {shipment.origin} → {shipment.destination}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-indigo-600">
+                          {shipment.actual_delivery ? new Date(shipment.actual_delivery).toLocaleDateString() : '-'}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {shipment.delivery_time_minutes ? (
+                          <div className="text-sm text-indigo-600">
+                            {Math.floor(shipment.delivery_time_minutes / 60)}h {shipment.delivery_time_minutes % 60}m
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500">-</div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Performance Metrics - Only show if we have performance data */}
