@@ -9,6 +9,18 @@ export default function Drivers() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const itemsPerPage = 10;
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingDriver, setEditingDriver] = useState(null);
+  const [formData, setFormData] = useState({
+    full_name: '',
+    license_number: '',
+    license_expiry: '',
+    medical_check_date: '',
+    training_certification: '',
+    status: 'available',
+    email: '',
+    phone: ''
+  });
 
   useEffect(() => {
     fetchDrivers();
@@ -37,18 +49,65 @@ export default function Drivers() {
   };
 
   const handleCreate = () => {
-    // TODO: Implement create functionality
-    console.log('Create button clicked');
+    setEditingDriver(null);
+    setFormData({
+      full_name: '',
+      license_number: '',
+      license_expiry: '',
+      medical_check_date: '',
+      training_certification: '',
+      status: 'available',
+      email: '',
+      phone: ''
+    });
+    setIsModalOpen(true);
   };
 
-  const handleEdit = (driverId) => {
-    // TODO: Implement edit functionality
-    console.log('Edit button clicked for driver:', driverId);
+  const handleEdit = (driver) => {
+    setEditingDriver(driver);
+    setFormData({
+      full_name: driver.full_name,
+      license_number: driver.license_number,
+      license_expiry: driver.license_expiry.split('T')[0], // Format as YYYY-MM-DD
+      medical_check_date: driver.medical_check_date ? driver.medical_check_date.split('T')[0] : '',
+      training_certification: driver.training_certification || '',
+      status: driver.status,
+      email: driver.email,
+      phone: driver.phone
+    });
+    setIsModalOpen(true);
   };
 
-  const handleDelete = (driverId) => {
-    // TODO: Implement delete functionality
-    console.log('Delete button clicked for driver:', driverId);
+  const handleDelete = async (driverId) => {
+    if (window.confirm('Are you sure you want to delete this driver?')) {
+      try {
+        await api.delete(`/drivers/${driverId}`);
+        setDrivers(drivers.filter(driver => driver.driver_id !== driverId));
+      } catch (err) {
+        console.error('Error deleting driver:', err);
+        setError(err.response?.data?.error || 'Failed to delete driver');
+      }
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (editingDriver) {
+        await api.put(`/drivers/${editingDriver.driver_id}`, formData);
+        setDrivers(drivers.map(driver => 
+          driver.driver_id === editingDriver.driver_id ? { ...driver, ...formData } : driver
+        ));
+      } else {
+        const response = await api.post('/drivers', formData);
+        setDrivers([...drivers, response.data]);
+      }
+      setIsModalOpen(false);
+      setError('');
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.response?.data?.error || (editingDriver ? 'Failed to update driver' : 'Failed to create driver'));
+    }
   };
 
   if (loading) return <div className="p-6">Loading...</div>;
@@ -98,7 +157,7 @@ export default function Drivers() {
                     {new Date(driver.license_expiry).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {new Date(driver.medical_check_date).toLocaleDateString()}
+                    {driver.medical_check_date ? new Date(driver.medical_check_date).toLocaleDateString() : 'Not Set'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{driver.training_certification}</td>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -112,7 +171,7 @@ export default function Drivers() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <button 
-                      onClick={() => handleEdit(driver.driver_id)}
+                      onClick={() => handleEdit(driver)}
                       className="text-purple-600 hover:text-purple-900 mr-3"
                     >
                       <i className="fas fa-edit"></i>
@@ -130,12 +189,121 @@ export default function Drivers() {
           </table>
         </div>
       </div>
+      
       <Pagination
         currentPage={currentPage}
         totalItems={drivers.length}
         itemsPerPage={itemsPerPage}
         onPageChange={setCurrentPage}
       />
+
+      {/* Driver Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <h2 className="text-2xl font-bold mb-6">
+              {editingDriver ? 'Edit Driver' : 'Add New Driver'}
+            </h2>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Full Name</label>
+                <input
+                  type="text"
+                  value={formData.full_name}
+                  onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">License Number</label>
+                <input
+                  type="text"
+                  value={formData.license_number}
+                  onChange={(e) => setFormData({ ...formData, license_number: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">License Expiry Date</label>
+                <input
+                  type="date"
+                  value={formData.license_expiry}
+                  onChange={(e) => setFormData({ ...formData, license_expiry: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Medical Check Date</label>
+                <input
+                  type="date"
+                  value={formData.medical_check_date}
+                  onChange={(e) => setFormData({ ...formData, medical_check_date: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Training Certification</label>
+                <input
+                  type="text"
+                  value={formData.training_certification}
+                  onChange={(e) => setFormData({ ...formData, training_certification: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Status</label>
+                <select
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                >
+                  <option value="available">Available</option>
+                  <option value="on_leave">On Leave</option>
+                  <option value="assigned">Assigned</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Email</label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Phone</label>
+                <input
+                  type="tel"
+                  value={formData.phone}
+                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-4 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700"
+                >
+                  {editingDriver ? 'Update' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
-} 
+}

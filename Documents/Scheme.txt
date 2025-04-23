@@ -1,0 +1,173 @@
+100 rows in set (0.0042 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE admins;
++--------------+-------------------------+------+-----+---------+----------------+
+| Field        | Type                    | Null | Key | Default | Extra          |
++--------------+-------------------------+------+-----+---------+----------------+
+| admin_id     | int                     | NO   | PRI | NULL    | auto_increment |
+| user_id      | int                     | NO   | UNI | NULL    |                |
+| access_level | enum('super','regular') | NO   |     | NULL    |                |
++--------------+-------------------------+------+-----+---------+----------------+
+3 rows in set (0.0036 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE customers;
++---------------+---------------+------+-----+---------+----------------+
+| Field         | Type          | Null | Key | Default | Extra          |
++---------------+---------------+------+-----+---------+----------------+
+| customer_id   | int           | NO   | PRI | NULL    | auto_increment |
+| user_id       | int           | NO   | UNI | NULL    |                |
+| company_name  | varchar(100)  | YES  |     | NULL    |                |
+| tax_id        | varchar(20)   | YES  |     | NULL    |                |
+| credit_limit  | decimal(10,2) | YES  |     | 0.00    |                |
+| payment_terms | varchar(50)   | YES  |     | NULL    |                |
++---------------+---------------+------+-----+---------+----------------+
+6 rows in set (0.0031 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE drivers;
++------------------------+-----------------------------------------+------+-----+-----------+----------------+
+| Field                  | Type                                    | Null | Key | Default   | Extra          |
++------------------------+-----------------------------------------+------+-----+-----------+----------------+
+| driver_id              | int                                     | NO   | PRI | NULL      | auto_increment |
+| user_id                | int                                     | NO   | UNI | NULL      |                |
+| license_number         | varchar(20)                             | NO   | UNI | NULL      |                |
+| license_expiry         | date                                    | NO   |     | NULL      |                |
+| medical_check_date     | date                                    | YES  |     | NULL      |                |
+| training_certification | varchar(100)                            | YES  |     | NULL      |                |
+| status                 | enum('available','on_leave','assigned') | YES  |     | available |                |
++------------------------+-----------------------------------------+------+-----+-----------+----------------+
+7 rows in set (0.0023 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE locations;
++---------------+-------------------------------------------+------+-----+---------+----------------+
+| Field         | Type                                      | Null | Key | Default | Extra          |
++---------------+-------------------------------------------+------+-----+---------+----------------+
+| location_id   | int                                       | NO   | PRI | NULL    | auto_increment |
+| address       | varchar(255)                              | NO   |     | NULL    |                |
+| city          | varchar(50)                               | NO   | MUL | NULL    |                |
+| state         | varchar(50)                               | NO   |     | NULL    |                |
+| country       | varchar(50)                               | YES  |     | India   |                |
+| postal_code   | varchar(10)                               | NO   |     | NULL    |                |
+| latitude      | decimal(10,8)                             | YES  |     | NULL    |                |
+| longitude     | decimal(11,8)                             | YES  |     | NULL    |                |
+| location_type | enum('warehouse','customer','drop_point') | NO   | MUL | NULL    |                |
++---------------+-------------------------------------------+------+-----+---------+----------------+
+9 rows in set (0.0028 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE routes;
++------------------------+-----------------------------+------+-----+---------+----------------+
+| Field                  | Type                        | Null | Key | Default | Extra          |
++------------------------+-----------------------------+------+-----+---------+----------------+
+| route_id               | int                         | NO   | PRI | NULL    | auto_increment |
+| route_name             | varchar(100)                | NO   |     | NULL    |                |
+| origin_id              | int                         | NO   | MUL | NULL    |                |
+| destination_id         | int                         | NO   | MUL | NULL    |                |
+| distance_km            | decimal(6,2)                | NO   |     | NULL    |                |
+| estimated_duration_min | int                         | NO   |     | NULL    |                |
+| status                 | enum('active','inactive')   | YES  |     | active  |                |
+| hazard_level           | enum('low','medium','high') | YES  |     | low     |                |
++------------------------+-----------------------------+------+-----+---------+----------------+
+8 rows in set (0.0029 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE shipment_items;
++--------------+---------------+------+-----+---------+----------------+
+| Field        | Type          | Null | Key | Default | Extra          |
++--------------+---------------+------+-----+---------+----------------+
+| item_id      | int           | NO   | PRI | NULL    | auto_increment |
+| shipment_id  | int           | NO   | MUL | NULL    |                |
+| description  | varchar(255)  | NO   |     | NULL    |                |
+| quantity     | int           | NO   |     | NULL    |                |
+| weight       | decimal(10,2) | NO   |     | NULL    |                |
+| volume       | decimal(10,2) | NO   |     | NULL    |                |
+| item_value   | decimal(10,2) | NO   |     | NULL    |                |
+| is_hazardous | tinyint(1)    | YES  |     | 0       |                |
+| is_fragile   | tinyint(1)    | YES  |     | 0       |                |
++--------------+---------------+------+-----+---------+----------------+
+9 rows in set (0.0021 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE shipments;
++----------------------+-----------------------------------------------------------------+------+-----+-------------------+-------------------+
+| Field                | Type                                                            | Null | Key | Default           | Extra             |
++----------------------+-----------------------------------------------------------------+------+-----+-------------------+-------------------+
+| shipment_id          | int                                                             | NO   | PRI | NULL              | auto_increment    |
+| tracking_number      | varchar(20)                                                     | NO   | UNI | NULL              |                   |
+| customer_id          | int                                                             | NO   | MUL | NULL              |                   |
+| origin_id            | int                                                             | NO   | MUL | NULL              |                   |
+| destination_id       | int                                                             | NO   | MUL | NULL              |                   |
+| route_id             | int                                                             | YES  | MUL | NULL              |                   |
+| vehicle_id           | int                                                             | YES  | MUL | NULL              |                   |
+| driver_id            | int                                                             | YES  | MUL | NULL              |                   |
+| status               | enum('pending','picked_up','in_transit','delivered','returned') | YES  |     | pending           |                   |
+| total_weight         | decimal(10,2)                                                   | NO   |     | NULL              |                   |
+| total_volume         | decimal(10,2)                                                   | NO   |     | NULL              |                   |
+| shipment_value       | decimal(12,2)                                                   | NO   |     | NULL              |                   |
+| insurance_required   | tinyint(1)                                                      | YES  |     | 0                 |                   |
+| special_instructions | text                                                            | YES  |     | NULL              |                   |
+| created_at           | timestamp                                                       | YES  |     | CURRENT_TIMESTAMP | DEFAULT_GENERATED |
+| pickup_date          | datetime                                                        | YES  |     | NULL              |                   |
+| estimated_delivery   | datetime                                                        | YES  |     | NULL              |                   |
+| actual_delivery      | datetime                                                        | YES  |     | NULL              |                   |
++----------------------+-----------------------------------------------------------------+------+-----+-------------------+-------------------+
+18 rows in set (0.0030 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE tracking_events;
++-----------------+-----------------------------------------------------------------+------+-----+-------------------+-------------------+
+| Field           | Type                                                            | Null | Key | Default           | Extra             |
++-----------------+-----------------------------------------------------------------+------+-----+-------------------+-------------------+
+| event_id        | int                                                             | NO   | PRI | NULL              | auto_increment    |
+| shipment_id     | int                                                             | NO   | MUL | NULL              |                   |
+| event_type      | enum('pickup','departure','arrival','delivery','delay','issue') | NO   |     | NULL              |                   |
+| location_id     | int                                                             | YES  | MUL | NULL              |                   |
+| event_timestamp | timestamp                                                       | YES  |     | CURRENT_TIMESTAMP | DEFAULT_GENERATED |
+| recorded_by     | int                                                             | YES  | MUL | NULL              |                   |
+| notes           | text                                                            | YES  |     | NULL              |                   |
++-----------------+-----------------------------------------------------------------+------+-----+-------------------+-------------------+
+7 rows in set (0.0026 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE users;
++------------+-----------------------------------+------+-----+-------------------+-------------------+
+| Field      | Type                              | Null | Key | Default           | Extra             |
++------------+-----------------------------------+------+-----+-------------------+-------------------+
+| user_id    | int                               | NO   | PRI | NULL              | auto_increment    |
+| username   | varchar(50)                       | NO   | UNI | NULL              |                   |
+| full_name  | varchar(100)                      | YES  |     | NULL              |                   |
+| email      | varchar(100)                      | NO   | UNI | NULL              |                   |
+| phone      | varchar(15)                       | NO   |     | NULL              |                   |
+| user_type  | enum('admin','driver','customer') | NO   | MUL | NULL              |                   |
+| status     | enum('active','inactive')         | YES  |     | active            |                   |
+| created_at | timestamp                         | YES  |     | CURRENT_TIMESTAMP | DEFAULT_GENERATED |
+| last_login | timestamp                         | YES  |     | NULL              |                   |
+| password   | text                              | YES  |     | NULL              |                   |
++------------+-----------------------------------+------+-----+-------------------+-------------------+
+10 rows in set (0.0027 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE vehicles;
++----------------------+---------------------------------------------+------+-----+-----------+----------------+
+| Field                | Type                                        | Null | Key | Default   | Extra          |
++----------------------+---------------------------------------------+------+-----+-----------+----------------+
+| vehicle_id           | int                                         | NO   | PRI | NULL      | auto_increment |
+| license_plate        | varchar(15)                                 | NO   | UNI | NULL      |                |
+| make                 | varchar(50)                                 | NO   |     | NULL      |                |
+| model                | varchar(50)                                 | NO   |     | NULL      |                |
+| year                 | int                                         | NO   |     | NULL      |                |
+| capacity_kg          | decimal(10,2)                               | NO   |     | NULL      |                |
+| vehicle_type         | enum('truck','van','trailer','pickup')      | NO   |     | NULL      |                |
+| status               | enum('available','in_maintenance','in_use') | YES  |     | available |                |
+| current_location_id  | int                                         | YES  | MUL | NULL      |                |
+| last_inspection_date | date                                        | YES  |     | NULL      |                |
++----------------------+---------------------------------------------+------+-----+-----------+----------------+
+10 rows in set (0.0024 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE warehouses;
++-------------------+---------------+------+-----+---------+----------------+
+| Field             | Type          | Null | Key | Default | Extra          |
++-------------------+---------------+------+-----+---------+----------------+
+| warehouse_id      | int           | NO   | PRI | NULL    | auto_increment |
+| location_id       | int           | NO   | UNI | NULL    |                |
+| warehouse_name    | varchar(100)  | NO   |     | NULL    |                |
+| capacity          | decimal(10,2) | NO   |     | NULL    |                |
+| current_occupancy | decimal(10,2) | YES  |     | 0.00    |                |
+| manager_id        | int           | YES  | MUL | NULL    |                |
+| operating_hours   | varchar(100)  | YES  |     | NULL    |                |
++-------------------+---------------+------+-----+---------+----------------+
+7 rows in set (0.0034 sec)
+ MySQL  localhost:33060+ ssl  transport_logistics  SQL > DESCRIBE waypoints;
++---------------------+------+------+-----+---------+----------------+
+| Field               | Type | Null | Key | Default | Extra          |
++---------------------+------+------+-----+---------+----------------+
+| waypoint_id         | int  | NO   | PRI | NULL    | auto_increment |
+| route_id            | int  | NO   | MUL | NULL    |                |
+| location_id         | int  | NO   | MUL | NULL    |                |
+| sequence_number     | int  | NO   |     | NULL    |                |
+| estimated_arrival   | time | YES  |     | NULL    |                |
+| estimated_departure | time | YES  |     | NULL    |                |
++---------------------+------+------+-----+---------+----------------+
+6 rows in set (0.0028 sec)
