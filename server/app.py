@@ -21,417 +21,112 @@ mysql = MySQL(app)
 def initialize_stored_procedures():
     try:
         cur = mysql.connection.cursor()
-        
-        # Create stored procedure for shipment analytics
+
+        # Drop procedures if they already exist (for re-init)
+        cur.execute("DROP PROCEDURE IF EXISTS get_customer_dashboard_data")
+        cur.execute("DROP PROCEDURE IF EXISTS get_driver_dashboard_data")
+
+        # Procedure for customer dashboard
         cur.execute("""
-        CREATE PROCEDURE IF NOT EXISTS `get_shipment_analytics`(IN customer_id_param INT)
+        CREATE PROCEDURE get_customer_dashboard_data(IN uid INT)
         BEGIN
-            -- Complex query with multiple joins and aggregations
-            WITH ShipmentCounts AS (
-                SELECT 
-                    s.status,
-                    COUNT(*) as count
-                FROM 
-                    shipments s
-                WHERE 
-                    (customer_id_param IS NULL OR s.customer_id = customer_id_param)
-                GROUP BY 
-                    s.status
-            ),
-            ValueByMonth AS (
-                SELECT 
-                    DATE_FORMAT(created_at, '%Y-%m') as month,
-                    SUM(shipment_value) as total_value,
-                    COUNT(*) as shipment_count
-                FROM 
-                    shipments
-                WHERE 
-                    (customer_id_param IS NULL OR customer_id = customer_id_param)
-                    AND created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
-                GROUP BY 
-                    DATE_FORMAT(created_at, '%Y-%m')
-                ORDER BY 
-                    month
-            ),
-            TopRoutes AS (
-                SELECT 
-                    CONCAT(orig.city, ' to ', dest.city) as route,
-                    COUNT(*) as shipment_count
-                FROM 
-                    shipments s
-                JOIN 
-                    locations orig ON s.origin_id = orig.location_id
-                JOIN 
-                    locations dest ON s.destination_id = dest.location_id
-                WHERE 
-                    (customer_id_param IS NULL OR s.customer_id = customer_id_param)
-                GROUP BY 
-                    route
-                ORDER BY 
-                    shipment_count DESC
+            -- Customer Info
+            SELECT c.*, u.full_name, u.email, u.phone 
+            FROM customers c 
+            JOIN users u ON c.user_id = u.user_id 
+            WHERE c.user_id = uid;
+
+            -- Customer Shipments
+            SELECT s.*, 
+                   CONCAT(o.city, ', ', o.state) AS origin,
+                   CONCAT(d.city, ', ', d.state) AS destination
+            FROM shipments s
+            LEFT JOIN locations o ON s.origin_id = o.location_id
+            LEFT JOIN locations d ON s.destination_id = d.location_id
+            WHERE s.customer_id = (
+                SELECT customer_id FROM customers WHERE user_id = uid
+            )
+            ORDER BY s.created_at DESC;
+
+            -- Recent Shipment Items (last 5 shipments)
+            SELECT si.*, s.tracking_number
+            FROM shipment_items si
+            JOIN shipments s ON si.shipment_id = s.shipment_id
+            WHERE si.shipment_id IN (
+                SELECT shipment_id 
+                FROM shipments 
+                WHERE customer_id = (
+                    SELECT customer_id FROM customers WHERE user_id = uid
+                )
+                ORDER BY created_at DESC
                 LIMIT 5
             )
-            
-            -- Return multiple result sets
-            SELECT 
-                (SELECT COUNT(*) FROM shipments WHERE (customer_id_param IS NULL OR customer_id = customer_id_param)) as total_shipments,
-                COALESCE((SELECT count FROM ShipmentCounts WHERE status = 'pending'), 0) as pending_shipments,
-                COALESCE((SELECT count FROM ShipmentCounts WHERE status = 'in_transit'), 0) as transit_shipments,
-                COALESCE((SELECT count FROM ShipmentCounts WHERE status = 'delivered'), 0) as delivered_shipments,
-                COALESCE((SELECT count FROM ShipmentCounts WHERE status = 'returned'), 0) as returned_shipments;
-                
-            -- Monthly data
-            SELECT * FROM ValueByMonth;
-            
-            -- Top routes
-            SELECT * FROM TopRoutes;
+            ORDER BY s.created_at DESC;
         END
         """)
-        
-        # Create stored procedure for driver performance analytics
+
+        # Procedure for driver dashboard
         cur.execute("""
-        CREATE PROCEDURE IF NOT EXISTS `get_driver_performance`(IN driver_id_param INT)
+        CREATE PROCEDURE get_driver_dashboard_data(IN uid INT)
         BEGIN
-            -- Get driver shipment statistics with weighted scoring
-            WITH ShipmentPerformance AS (
-                SELECT 
-                    s.driver_id,
-                    COUNT(*) as total_deliveries,
-                    SUM(CASE WHEN s.status = 'delivered' THEN 1 ELSE 0 END) as completed_deliveries,
-                    SUM(CASE WHEN s.status = 'returned' THEN 1 ELSE 0 END) as returned_deliveries,
-                    AVG(
-                        CASE 
-                            WHEN s.status = 'delivered' AND s.actual_delivery IS NOT NULL AND s.estimated_delivery IS NOT NULL
-                            THEN 
-                                -- Score based on delivery time (lower is better, normalize to 0-100 scale)
-                                CASE 
-                                    WHEN TIMESTAMPDIFF(HOUR, s.estimated_delivery, s.actual_delivery) <= 0 
-                                    THEN 100 -- On time or early: perfect score
-                                    WHEN TIMESTAMPDIFF(HOUR, s.estimated_delivery, s.actual_delivery) <= 24
-                                    THEN 80 -- Within 24 hours: good score
-                                    WHEN TIMESTAMPDIFF(HOUR, s.estimated_delivery, s.actual_delivery) <= 48
-                                    THEN 60 -- Within 48 hours: average score
-                                    ELSE 40 -- More than 48 hours: poor score
-                                END
-                            ELSE NULL
-                        END
-                    ) as delivery_time_score,
-                    COUNT(DISTINCT s.shipment_id) as unique_routes_count
-                FROM 
-                    shipments s
-                WHERE
-                    (driver_id_param IS NULL OR s.driver_id = driver_id_param)
-                    AND s.created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 MONTH)
-                GROUP BY 
-                    s.driver_id
-            ),
-            DriverEvents AS (
-                SELECT 
-                    s.driver_id,
-                    COUNT(te.event_id) as total_events,
-                    SUM(CASE WHEN te.event_type = 'issue' THEN 1 ELSE 0 END) as issue_count,
-                    SUM(CASE WHEN te.event_type = 'delay' THEN 1 ELSE 0 END) as delay_count
-                FROM 
-                    tracking_events te
-                JOIN 
-                    shipments s ON te.shipment_id = s.shipment_id
-                WHERE 
-                    (driver_id_param IS NULL OR s.driver_id = driver_id_param)
-                    AND te.event_timestamp >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 MONTH)
-                GROUP BY 
-                    s.driver_id
+            -- Driver Info
+            SELECT d.*, u.full_name, u.email, u.phone 
+            FROM drivers d 
+            JOIN users u ON d.user_id = u.user_id 
+            WHERE d.user_id = uid;
+
+            -- Assigned Vehicles
+            SELECT v.* 
+            FROM vehicles v
+            JOIN shipments s ON s.vehicle_id = v.vehicle_id
+            WHERE s.driver_id = (
+                SELECT driver_id FROM drivers WHERE user_id = uid
             )
-            
-            -- Calculate weighted performance score
-            SELECT 
-                d.driver_id,
-                u.full_name as driver_name,
-                sp.total_deliveries,
-                sp.completed_deliveries,
-                COALESCE(sp.delivery_time_score, 0) as time_efficiency,
-                de.issue_count,
-                de.delay_count,
-                COALESCE(sp.total_deliveries, 0) - COALESCE(sp.completed_deliveries, 0) as incomplete_deliveries,
+            AND s.status IN ('pending', 'picked_up', 'in_transit')
+            GROUP BY v.vehicle_id;
+
+            -- Driver's Shipments
+            SELECT s.*, 
+                   c.company_name,
+                   CONCAT(o.city, ', ', o.state) AS origin,
+                   CONCAT(d.city, ', ', d.state) AS destination,
+                   v.license_plate
+            FROM shipments s
+            LEFT JOIN customers c ON s.customer_id = c.customer_id
+            LEFT JOIN locations o ON s.origin_id = o.location_id
+            LEFT JOIN locations d ON s.destination_id = d.location_id
+            LEFT JOIN vehicles v ON s.vehicle_id = v.vehicle_id
+            WHERE s.driver_id = (
+                SELECT driver_id FROM drivers WHERE user_id = uid
+            )
+            ORDER BY 
                 CASE 
-                    WHEN sp.total_deliveries > 0 
-                    THEN (sp.completed_deliveries / sp.total_deliveries * 100) 
-                    ELSE 0 
-                END as completion_rate,
-                -- Overall performance score (weighted average)
-                (
-                    COALESCE(sp.delivery_time_score, 50) * 0.4 + 
-                    CASE 
-                        WHEN sp.total_deliveries > 0 
-                        THEN (sp.completed_deliveries / sp.total_deliveries * 100) 
-                        ELSE 0 
-                    END * 0.4 +
-                    CASE
-                        WHEN de.total_events > 0
-                        THEN (100 - (de.issue_count + de.delay_count) / de.total_events * 100)
-                        ELSE 80
-                    END * 0.2
-                ) as overall_performance
-            FROM 
-                drivers d
-            LEFT JOIN
-                users u ON d.user_id = u.user_id
-            LEFT JOIN
-                ShipmentPerformance sp ON d.driver_id = sp.driver_id
-            LEFT JOIN
-                DriverEvents de ON d.driver_id = de.driver_id
-            WHERE
-                (driver_id_param IS NULL OR d.driver_id = driver_id_param);
+                    WHEN s.status = 'pending' THEN 1
+                    WHEN s.status = 'picked_up' THEN 2
+                    WHEN s.status = 'in_transit' THEN 3
+                    WHEN s.status = 'delivered' THEN 4
+                    WHEN s.status = 'returned' THEN 5
+                END,
+                s.created_at DESC;
+
+            -- Recent Tracking Events
+            SELECT te.*, s.tracking_number
+            FROM tracking_events te
+            JOIN shipments s ON te.shipment_id = s.shipment_id
+            WHERE te.recorded_by = uid OR s.driver_id = (
+                SELECT driver_id FROM drivers WHERE user_id = uid
+            )
+            ORDER BY te.event_timestamp DESC
+            LIMIT 10;
         END
         """)
-        
-        # Create stored procedure for calculating estimated delivery times
-        cur.execute("""
-        CREATE PROCEDURE IF NOT EXISTS `calculate_estimated_delivery`(IN shipment_id_param INT)
-        BEGIN
-            DECLARE origin_id_var INT;
-            DECLARE destination_id_var INT;
-            DECLARE route_id_var INT;
-            DECLARE distance_km_var DECIMAL(6,2);
-            DECLARE estimated_duration_min_var INT;
-            DECLARE pickup_date_var DATETIME;
-            DECLARE estimated_delivery_var DATETIME;
-            
-            -- Get shipment details
-            SELECT origin_id, destination_id, route_id, pickup_date
-            INTO origin_id_var, destination_id_var, route_id_var, pickup_date_var
-            FROM shipments
-            WHERE shipment_id = shipment_id_param;
-            
-            -- If we have a route, use its distance and estimated duration
-            IF route_id_var IS NOT NULL THEN
-                SELECT distance_km, estimated_duration_min
-                INTO distance_km_var, estimated_duration_min_var
-                FROM routes
-                WHERE route_id = route_id_var;
-            ELSE
-                -- Otherwise, estimate based on a simple formula
-                -- In real life, this would be more complex with Google Maps API etc.
-                SELECT 
-                    SQRT(
-                        POWER(ABS(o.latitude - d.latitude) * 111, 2) + 
-                        POWER(ABS(o.longitude - d.longitude) * 111 * COS(RADIANS((o.latitude + d.latitude) / 2)), 2)
-                    ) AS distance_km,
-                    -- Estimate 45 min per 50km, plus 120 min fixed time for loading/unloading
-                    SQRT(
-                        POWER(ABS(o.latitude - d.latitude) * 111, 2) + 
-                        POWER(ABS(o.longitude - d.longitude) * 111 * COS(RADIANS((o.latitude + d.latitude) / 2)), 2)
-                    ) / 50 * 45 + 120 AS estimated_duration_min
-                INTO distance_km_var, estimated_duration_min_var
-                FROM locations o
-                JOIN locations d ON 1=1
-                WHERE o.location_id = origin_id_var
-                AND d.location_id = destination_id_var;
-            END IF;
-            
-            -- Calculate estimated delivery time
-            IF pickup_date_var IS NOT NULL AND estimated_duration_min_var IS NOT NULL THEN
-                SET estimated_delivery_var = DATE_ADD(pickup_date_var, INTERVAL estimated_duration_min_var MINUTE);
-                
-                -- Update the shipment with the estimated delivery time
-                UPDATE shipments
-                SET estimated_delivery = estimated_delivery_var
-                WHERE shipment_id = shipment_id_param;
-                
-                -- Return the calculated values
-                SELECT 
-                    shipment_id_param AS shipment_id,
-                    distance_km_var AS distance_km,
-                    estimated_duration_min_var AS estimated_duration_min,
-                    pickup_date_var AS pickup_date,
-                    estimated_delivery_var AS estimated_delivery;
-            ELSE
-                SELECT 
-                    shipment_id_param AS shipment_id,
-                    NULL AS error_message;
-            END IF;
-        END
-        """)
-        
-        # Create a view for dashboard stats
-        cur.execute("""
-        CREATE OR REPLACE VIEW dashboard_stats AS
-        SELECT
-            (SELECT COUNT(*) FROM shipments) AS total_shipments,
-            (SELECT COUNT(*) FROM shipments WHERE status = 'pending') AS pending_shipments,
-            (SELECT COUNT(*) FROM shipments WHERE status = 'in_transit') AS intransit_shipments,
-            (SELECT COUNT(*) FROM shipments WHERE status = 'delivered') AS delivered_shipments,
-            (SELECT COUNT(*) FROM customers) AS total_customers,
-            (SELECT COUNT(*) FROM drivers) AS total_drivers,
-            (SELECT COUNT(*) FROM vehicles) AS total_vehicles,
-            (SELECT COUNT(*) FROM vehicles WHERE status = 'available') AS available_vehicles,
-            (SELECT COUNT(*) FROM drivers WHERE status = 'available') AS available_drivers
-        """)
-        
-        # Create stored procedure for customers to see their own analytics
-        cur.execute("""
-        CREATE PROCEDURE IF NOT EXISTS `get_customer_dashboard`(IN customer_id_param INT)
-        BEGIN
-            -- Basic stats
-            SELECT 
-                COUNT(*) AS total_shipments,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_shipments,
-                SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END) AS active_shipments,
-                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered_shipments,
-                SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) AS returned_shipments,
-                SUM(shipment_value) AS total_value_shipped,
-                AVG(CASE WHEN status = 'delivered' AND pickup_date IS NOT NULL AND actual_delivery IS NOT NULL
-                    THEN TIMESTAMPDIFF(HOUR, pickup_date, actual_delivery)
-                    ELSE NULL END) AS avg_delivery_time_hours
-            FROM
-                shipments
-            WHERE
-                customer_id = customer_id_param;
-            
-            -- Recent shipments 
-            SELECT 
-                s.shipment_id, 
-                s.tracking_number, 
-                s.status,
-                s.pickup_date,
-                s.estimated_delivery,
-                s.actual_delivery,
-                CONCAT(lo.city, ', ', lo.state) AS origin,
-                CONCAT(ld.city, ', ', ld.state) AS destination,
-                u.full_name AS driver_name,
-                v.license_plate AS vehicle
-            FROM 
-                shipments s
-            JOIN 
-                locations lo ON s.origin_id = lo.location_id
-            JOIN 
-                locations ld ON s.destination_id = ld.location_id
-            LEFT JOIN 
-                drivers d ON s.driver_id = d.driver_id
-            LEFT JOIN 
-                users u ON d.user_id = u.user_id
-            LEFT JOIN 
-                vehicles v ON s.vehicle_id = v.vehicle_id
-            WHERE 
-                s.customer_id = customer_id_param
-            ORDER BY 
-                s.created_at DESC
-            LIMIT 5;
-            
-            -- Shipment value over time (monthly)
-            SELECT 
-                DATE_FORMAT(created_at, '%Y-%m') AS month,
-                COUNT(*) AS shipment_count,
-                SUM(shipment_value) AS total_value,
-                AVG(shipment_value) AS avg_value
-            FROM 
-                shipments
-            WHERE 
-                customer_id = customer_id_param AND
-                created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
-            GROUP BY 
-                DATE_FORMAT(created_at, '%Y-%m')
-            ORDER BY 
-                month;
-        END
-        """)
-        
-        # Create stored procedure for drivers to see their performance and assigned shipments
-        cur.execute("""
-        CREATE PROCEDURE IF NOT EXISTS `get_driver_dashboard`(IN driver_id_param INT)
-        BEGIN
-            -- Basic stats
-            SELECT 
-                COUNT(*) AS total_shipments,
-                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered_shipments,
-                SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END) AS active_shipments,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_shipments,
-                (SELECT status FROM drivers WHERE driver_id = driver_id_param) AS driver_status
-            FROM
-                shipments
-            WHERE
-                driver_id = driver_id_param;
-            
-            -- Current active shipment (in transit)
-            SELECT 
-                s.shipment_id, 
-                s.tracking_number,
-                CONCAT(c.company_name, ' (', u.full_name, ')') AS customer,
-                CONCAT(lo.city, ', ', lo.state) AS origin,
-                CONCAT(ld.city, ', ', ld.state) AS destination,
-                s.pickup_date,
-                s.estimated_delivery,
-                v.license_plate AS vehicle,
-                s.total_weight,
-                s.special_instructions
-            FROM 
-                shipments s
-            JOIN 
-                locations lo ON s.origin_id = lo.location_id
-            JOIN 
-                locations ld ON s.destination_id = ld.location_id
-            JOIN 
-                customers c ON s.customer_id = c.customer_id
-            JOIN 
-                users u ON c.user_id = u.user_id
-            LEFT JOIN 
-                vehicles v ON s.vehicle_id = v.vehicle_id
-            WHERE 
-                s.driver_id = driver_id_param AND
-                s.status = 'in_transit'
-            ORDER BY 
-                s.estimated_delivery
-            LIMIT 1;
-            
-            -- Upcoming shipments (pending)
-            SELECT 
-                s.shipment_id, 
-                s.tracking_number,
-                CONCAT(lo.city, ', ', lo.state) AS origin,
-                CONCAT(ld.city, ', ', ld.state) AS destination,
-                s.pickup_date,
-                s.estimated_delivery
-            FROM 
-                shipments s
-            JOIN 
-                locations lo ON s.origin_id = lo.location_id
-            JOIN 
-                locations ld ON s.destination_id = ld.location_id
-            WHERE 
-                s.driver_id = driver_id_param AND
-                s.status = 'pending'
-            ORDER BY 
-                s.pickup_date
-            LIMIT 3;
-            
-            -- Recent deliveries
-            SELECT 
-                s.shipment_id, 
-                s.tracking_number,
-                CONCAT(lo.city, ', ', lo.state) AS origin,
-                CONCAT(ld.city, ', ', ld.state) AS destination,
-                s.pickup_date,
-                s.actual_delivery,
-                TIMESTAMPDIFF(MINUTE, s.pickup_date, s.actual_delivery) AS delivery_time_minutes
-            FROM 
-                shipments s
-            JOIN 
-                locations lo ON s.origin_id = lo.location_id
-            JOIN 
-                locations ld ON s.destination_id = ld.location_id
-            WHERE 
-                s.driver_id = driver_id_param AND
-                s.status = 'delivered'
-            ORDER BY 
-                s.actual_delivery DESC
-            LIMIT 5;
-        END
-        """)
-        
+
         mysql.connection.commit()
-        print("✅ Stored procedures initialized successfully")
+        cur.close()
+        print("Stored procedures initialized successfully.")
         return True
     except Exception as e:
-        print(f"❌ Error initializing stored procedures: {str(e)}")
+        print(f"Error initializing stored procedures: {e}")
         return False
 
 # Replace deprecated before_first_request with a proper setup pattern
@@ -2682,6 +2377,56 @@ def get_driver_dashboard(user_id):
     except Exception as e:
         print(f"Error in get_driver_dashboard: {e}")
         return jsonify({'error': str(e)}), 500
+    
+    
+    
+@app.route('/api/new/customer-dashboard/<int:user_id>', methods=['GET'])
+def new_customer_dashboard(user_id):
+    try:
+        cur = mysql.connection.cursor(dictionary=True)
+        cur.callproc('get_customer_dashboard_data', [user_id])
+
+        # Fetch all result sets from stored procedure
+        customer_info = cur.stored_results().__next__().fetchone()
+        shipments = cur.stored_results().__next__().fetchall()
+        shipment_items = cur.stored_results().__next__().fetchall()
+
+        cur.close()
+
+        return jsonify({
+            'customer_info': customer_info,
+            'shipments': shipments,
+            'shipment_items': shipment_items
+        })
+
+    except Exception as e:
+        print(f"Error in new_customer_dashboard: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/new/driver-dashboard/<int:user_id>', methods=['GET'])
+def new_driver_dashboard(user_id):
+    try:
+        cur = mysql.connection.cursor(dictionary=True)
+        cur.callproc('get_driver_dashboard_data', [user_id])
+
+        driver_info = cur.stored_results().__next__().fetchone()
+        vehicles = cur.stored_results().__next__().fetchall()
+        shipments = cur.stored_results().__next__().fetchall()
+        recent_tracking_events = cur.stored_results().__next__().fetchall()
+
+        cur.close()
+
+        return jsonify({
+            'driver_info': driver_info,
+            'vehicles': vehicles,
+            'shipments': shipments,
+            'recent_tracking_events': recent_tracking_events
+        })
+
+    except Exception as e:
+        print(f"Error in new_driver_dashboard: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True)
