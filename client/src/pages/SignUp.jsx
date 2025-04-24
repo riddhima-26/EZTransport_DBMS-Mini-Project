@@ -61,7 +61,7 @@ const SignUp = () => {
       setLoading(true);
       setError(null);
       
-      const response = await api.post('/api/register', formData);
+      const response = await api.post('/register', formData);
       
       if (response.data && response.data.success) {
         setSuccess(true);
@@ -307,4 +307,4 @@ const SignUp = () => {
   );
 };
 
-export default SignUp; 
+export default SignUp;

@@ -54,7 +54,7 @@ const Tracking = () => {
   const fetchEvents = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/api/tracking-events');
+      const response = await api.get('/tracking-events');
       setEvents(response.data || []);
       setError('');
     } catch (error) {
@@ -68,7 +68,7 @@ const Tracking = () => {
 
   const fetchShipments = async () => {
     try {
-      const response = await api.get('/api/shipments');
+      const response = await api.get('/shipments');
       setShipments(response.data || []);
     } catch (error) {
       console.error('Error fetching shipments:', error);
@@ -77,7 +77,7 @@ const Tracking = () => {
 
   const fetchLocations = async () => {
     try {
-      const response = await api.get('/api/locations');
+      const response = await api.get('/locations');
       setLocations(response.data || []);
     } catch (error) {
       console.error('Error fetching locations:', error);
@@ -94,22 +94,10 @@ const Tracking = () => {
       // Search by shipment ID or tracking number
       let shipmentResponse;
       if (mode === 'id') {
-        shipmentResponse = await api.get(`/api/shipments/${value}`);
+        shipmentResponse = await api.get(`/shipments/${value}`);
       } else {
-        // For tracking number, we need to get all shipments and filter
-        const allShipmentsResponse = await api.get(`/api/shipments`);
-        const matchingShipment = allShipmentsResponse.data.find(
-          s => s.tracking_number === value
-        );
-        if (matchingShipment) {
-          shipmentResponse = { data: matchingShipment };
-        } else {
-          setError('Shipment not found');
-          setShipment(null);
-          setTrackingEvents([]);
-          setLoading(false);
-          return;
-        }
+        // Use the new tracking number endpoint
+        shipmentResponse = await api.get(`/shipments/tracking/${value}`);
       }
       
       if (!shipmentResponse.data || (Array.isArray(shipmentResponse.data) && shipmentResponse.data.length === 0)) {
@@ -123,8 +111,8 @@ const Tracking = () => {
       const shipmentData = Array.isArray(shipmentResponse.data) ? shipmentResponse.data[0] : shipmentResponse.data;
       setShipment(shipmentData);
       
-      // Get tracking events for the shipment using the correct endpoint
-      const eventsResponse = await api.get(`/api/shipments/${shipmentData.shipment_id}/events`);
+      // Get tracking events for the shipment
+      const eventsResponse = await api.get(`/shipment/${shipmentData.shipment_id}/tracking`);
       setTrackingEvents(eventsResponse.data || []);
       
     } catch (err) {
@@ -210,7 +198,7 @@ const Tracking = () => {
   const handleDelete = async (eventId) => {
     if (window.confirm('Are you sure you want to delete this tracking event?')) {
       try {
-        await api.delete(`/api/tracking-events/${eventId}`);
+        await api.delete(`/tracking-events/${eventId}`);
         setEvents(events.filter(event => event.event_id !== eventId));
       } catch (err) {
         console.error('Error deleting tracking event:', err);
@@ -223,10 +211,10 @@ const Tracking = () => {
     e.preventDefault();
     try {
       if (editingEvent) {
-        await api.put(`/api/tracking-events/${editingEvent.event_id}`, formData);
+        await api.put(`/tracking-events/${editingEvent.event_id}`, formData);
         fetchEvents(); // Refresh data after update
       } else {
-        await api.post('/api/tracking-events', formData);
+        await api.post('/tracking-events', formData);
         fetchEvents(); // Refresh data after create
       }
       setIsModalOpen(false);

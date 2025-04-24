@@ -1,148 +1,91 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
-import { Bar } from 'react-chartjs-2';
-
-// Register ChartJS components
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 const CustomerDashboard = () => {
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const [stats, setStats] = useState({
-    basicStats: {
-      total_shipments: 0,
-      pending_shipments: 0,
-      transit_shipments: 0,
-      delivered_shipments: 0,
-      returned_shipments: 0
-    },
-    monthlyData: [],
-    topRoutes: [],
-    recentShipments: []
-  });
+  const [customerData, setCustomerData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [trackingNumber, setTrackingNumber] = useState('');
-
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editFormData, setEditFormData] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    company_name: '',
+    tax_id: '',
+  });
+  const [shipmentFilter, setShipmentFilter] = useState('all');
+  
   useEffect(() => {
-    const fetchCustomerData = async () => {
-      try {
-        setLoading(true);
-        
-        if (!user?.id) {
-          setError("Could not identify user ID. Please log in again.");
-          setLoading(false);
-          return;
-        }
-        
-        // Find customer_id based on user_id
-        try {
-          console.log("Fetching customer info for user ID:", user.id);
-          const customersResponse = await api.get('/customers');
-          console.log("Customers response:", customersResponse.data);
-          
-          // Convert user.id to integer for proper comparison
-          const userIdInt = parseInt(user.id);
-          const customerInfo = Array.isArray(customersResponse.data) 
-            ? customersResponse.data.find(customer => customer.user_id === userIdInt)
-            : null;
-          
-          if (!customerInfo) {
-            console.error("No customer record found for user ID:", user.id);
-            setError('Customer information not found');
-            setLoading(false);
-            return;
-          }
-          
-          console.log("Found customer:", customerInfo);
-          
-          // Using the customer stats endpoint - remove /api prefix
-          const statsResponse = await api.get(`/customer/stats/${customerInfo.customer_id}`);
-          
-          if (statsResponse?.data?.success) {
-            console.log("Customer stats:", statsResponse.data);
-            const data = statsResponse.data;
-            
-            // Format data for the component
-            setStats({
-              basicStats: {
-                total_shipments: data.stats?.total_shipments || 0,
-                pending_shipments: data.stats?.pending_shipments || 0,
-                transit_shipments: data.stats?.active_shipments || 0,
-                delivered_shipments: data.stats?.delivered_shipments || 0,
-                returned_shipments: data.stats?.returned_shipments || 0,
-                total_value: data.stats?.total_value_shipped || 0
-              },
-              monthlyData: data.monthlyData || [],
-              topRoutes: data.topRoutes || [],
-              recentShipments: data.recentShipments || []
-            });
-          } else {
-            throw new Error("Invalid response from stats API");
-          }
-        } catch (statsError) {
-          console.error('Error fetching customer stats:', statsError);
-          setError('Could not load your dashboard. Please try again later.');
-          
-          // Fallback to basic shipment data
-          try {
-            // Using the shipments endpoint with filtering - remove /api prefix
-            const shipmentsResponse = await api.get('/shipments', {
-              params: { user_id: user.id, user_type: 'customer' }
-            });
-            
-            const customerShipments = shipmentsResponse.data || [];
-            console.log("Fallback shipments:", customerShipments);
-            
-            setStats({
-              basicStats: {
-                total_shipments: customerShipments.length,
-                pending_shipments: customerShipments.filter(s => s.status === 'pending').length,
-                transit_shipments: customerShipments.filter(s => s.status === 'in_transit').length,
-                delivered_shipments: customerShipments.filter(s => s.status === 'delivered').length,
-                returned_shipments: customerShipments.filter(s => s.status === 'returned').length,
-                total_value: 0
-              },
-              monthlyData: [],
-              topRoutes: [],
-              recentShipments: customerShipments
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-                .slice(0, 5)
-            });
-          } catch (shipmentError) {
-            console.error('Error fetching customer shipments:', shipmentError);
-          }
-        }
-        
-        setLoading(false);
-      } catch (err) {
-        console.error('Error fetching customer data:', err);
-        setError('Could not load your dashboard data. Please try again later.');
-        setLoading(false);
-      }
-    };
-
     fetchCustomerData();
-  }, [user]);
+  }, [user.id]);
 
-  const handleTrackingSearch = (e) => {
-    e.preventDefault();
-    if (trackingNumber.trim()) {
-      navigate(`/tracking?tracking=${trackingNumber.trim()}`);
+  const fetchCustomerData = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get(`/api/customer-dashboard/${user.id}`);
+      setCustomerData(response.data);
+      
+      // Initialize edit form data
+      if (response.data.customer_info) {
+        setEditFormData({
+          full_name: response.data.customer_info.full_name,
+          email: response.data.customer_info.email,
+          phone: response.data.customer_info.phone,
+          company_name: response.data.customer_info.company_name || '',
+          tax_id: response.data.customer_info.tax_id || '',
+        });
+      }
+      
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching customer data:', err);
+      setError('Failed to load customer data. Please try again later.');
+      setLoading(false);
     }
   };
 
-  const getStatusClass = (status) => {
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api.put(`/api/customers/${customerData.customer_info.customer_id}`, editFormData);
+      // Update the local state
+      setCustomerData({
+        ...customerData,
+        customer_info: {
+          ...customerData.customer_info,
+          ...editFormData
+        }
+      });
+      setIsEditModalOpen(false);
+      // Show success message
+      alert('Profile updated successfully!');
+    } catch (err) {
+      console.error('Error updating customer info:', err);
+      alert('Failed to update profile. Please try again.');
+    }
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  const getStatusBadgeClass = (status) => {
     switch (status) {
-      case 'delivered':
-        return 'bg-green-100 text-green-800';
-      case 'in_transit':
-        return 'bg-blue-100 text-blue-800';
       case 'pending':
         return 'bg-yellow-100 text-yellow-800';
+      case 'picked_up':
+        return 'bg-blue-100 text-blue-800';
+      case 'in_transit':
+        return 'bg-purple-100 text-purple-800';
+      case 'delivered':
+        return 'bg-green-100 text-green-800';
       case 'returned':
         return 'bg-red-100 text-red-800';
       default:
@@ -150,287 +93,307 @@ const CustomerDashboard = () => {
     }
   };
 
-  // Prepare chart data
-  const chartData = {
-    labels: stats.monthlyData.map(item => item.month),
-    datasets: [
-      {
-        label: 'Shipment Value ($)',
-        data: stats.monthlyData.map(item => item.total_value),
-        backgroundColor: 'rgba(79, 70, 229, 0.6)',
-        borderColor: 'rgb(79, 70, 229)',
-        borderWidth: 1,
-      },
-    ],
+  const filteredShipments = () => {
+    if (!customerData || !customerData.shipments) return [];
+    if (shipmentFilter === 'all') return customerData.shipments;
+    return customerData.shipments.filter(shipment => shipment.status === shipmentFilter);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-yellow-500"></div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-center p-8">
-        <div className="text-red-500 mb-4">
-          <i className="fas fa-exclamation-circle text-5xl"></i>
-        </div>
-        <h3 className="text-xl font-bold mb-2">Error Loading Data</h3>
-        <p className="text-gray-600">{error}</p>
-      </div>
-    );
-  }
+  if (loading) return (
+    <div className="flex justify-center items-center min-h-screen">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500"></div>
+    </div>
+  );
+  
+  if (error) return (
+    <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 m-6" role="alert">
+      <p className="font-bold">Error</p>
+      <p>{error}</p>
+    </div>
+  );
 
   return (
-    <div className="p-6 bg-indigo-50">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-2 text-indigo-900">Customer Dashboard</h1>
-        <p className="text-indigo-700">Welcome, <span className="font-medium">{user?.full_name}</span>. Track your shipments and manage your logistics.</p>
-      </div>
-
-      {/* Quick Tracking Search */}
-      <div className="bg-gradient-to-r from-indigo-900 to-purple-900 rounded-lg shadow-md p-6 mb-6 text-white">
-        <h2 className="text-lg font-semibold text-yellow-300 mb-3">Track Your Shipment</h2>
-        <form onSubmit={handleTrackingSearch} className="flex flex-col sm:flex-row gap-3">
-          <input 
-            type="text" 
-            value={trackingNumber}
-            onChange={(e) => setTrackingNumber(e.target.value)}
-            placeholder="Enter tracking number" 
-            className="flex-1 px-4 py-2 bg-white/10 border border-indigo-300/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400 text-white placeholder:text-indigo-200"
-          />
-          <button 
-            type="submit" 
-            className="bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-400 hover:to-yellow-500 text-indigo-950 font-medium px-6 py-2 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl"
-          >
-            <i className="fas fa-search mr-2"></i>
-            Track
-          </button>
-        </form>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-        <div className="bg-white/50 backdrop-blur-sm rounded-xl shadow-md p-6 border border-indigo-100">
-          <div className="flex items-center">
-            <div className="bg-indigo-100 p-3 rounded-full">
-              <i className="fas fa-box-open text-indigo-600 text-xl"></i>
-            </div>
-            <div className="ml-4">
-              <h3 className="text-lg font-semibold text-indigo-900">Total Shipments</h3>
-              <p className="text-3xl font-bold text-indigo-700">{stats.basicStats.total_shipments}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white/50 backdrop-blur-sm rounded-xl shadow-md p-6 border border-yellow-100">
-          <div className="flex items-center">
-            <div className="bg-yellow-100 p-3 rounded-full">
-              <i className="fas fa-clock text-yellow-600 text-xl"></i>
-            </div>
-            <div className="ml-4">
-              <h3 className="text-lg font-semibold text-indigo-900">Pending</h3>
-              <p className="text-3xl font-bold text-yellow-600">{stats.basicStats.pending_shipments}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white/50 backdrop-blur-sm rounded-xl shadow-md p-6 border border-blue-100">
-          <div className="flex items-center">
-            <div className="bg-blue-100 p-3 rounded-full">
-              <i className="fas fa-truck text-blue-600 text-xl"></i>
-            </div>
-            <div className="ml-4">
-              <h3 className="text-lg font-semibold text-indigo-900">In Transit</h3>
-              <p className="text-3xl font-bold text-blue-600">{stats.basicStats.transit_shipments}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white/50 backdrop-blur-sm rounded-xl shadow-md p-6 border border-green-100">
-          <div className="flex items-center">
-            <div className="bg-green-100 p-3 rounded-full">
-              <i className="fas fa-check-circle text-green-600 text-xl"></i>
-            </div>
-            <div className="ml-4">
-              <h3 className="text-lg font-semibold text-indigo-900">Delivered</h3>
-              <p className="text-3xl font-bold text-green-600">{stats.basicStats.delivered_shipments}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        {/* Monthly Chart */}
-        <div className="lg:col-span-2 bg-white/80 backdrop-blur-sm rounded-xl shadow-md p-6 border border-indigo-100">
-          <h2 className="text-xl font-semibold text-indigo-900 mb-4">Shipment Value History</h2>
-          {stats.monthlyData.length > 0 ? (
-            <Bar data={chartData} options={{
-              responsive: true,
-              scales: {
-                y: {
-                  beginAtZero: true,
-                  title: {
-                    display: true,
-                    text: 'Value ($)'
-                  }
-                }
-              },
-              plugins: {
-                legend: {
-                  position: 'top',
-                },
-                title: {
-                  display: false,
-                },
-              },
-            }} />
-          ) : (
-            <div className="flex items-center justify-center h-64 text-indigo-400">
-              <p>No shipment history available</p>
-            </div>
-          )}
-        </div>
-
-        {/* Top Routes */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-md p-6 border border-indigo-100">
-          <h2 className="text-xl font-semibold text-indigo-900 mb-4">Top Routes</h2>
-          {stats.topRoutes.length > 0 ? (
-            <div className="space-y-4">
-              {stats.topRoutes.map((route, index) => (
-                <div key={index} className="bg-indigo-50 rounded-lg p-4">
-                  <div className="flex justify-between items-center">
-                    <div className="text-indigo-800 font-medium">{route.route}</div>
-                    <div className="bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full text-xs">
-                      {route.shipment_count} shipments
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-64 text-indigo-400">
-              <p>No route data available</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Recent Shipments */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-md p-6 border border-indigo-100">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-indigo-900">Recent Shipments</h2>
-          <Link
-            to="/customer/shipments"
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm transition-colors"
-          >
-            View All
-          </Link>
+    <div className="bg-gray-50 min-h-screen p-6">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-purple-800 mb-2">Customer Dashboard</h1>
+          <p className="text-gray-600">Welcome back, {customerData.customer_info.full_name}</p>
         </div>
         
-        {stats.recentShipments.length === 0 ? (
-          <div className="text-center py-8">
-            <div className="text-indigo-300 mb-3">
-              <i className="fas fa-box-open text-5xl"></i>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Personal Information Card */}
+          <div className="lg:col-span-1">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold text-gray-800">Personal Information</h2>
+                <button 
+                  onClick={() => setIsEditModalOpen(true)}
+                  className="text-purple-600 hover:text-purple-800 font-medium text-sm flex items-center"
+                >
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                  </svg>
+                  Edit
+                </button>
+              </div>
+              
+              <div className="space-y-3">
+                <div className="flex">
+                  <span className="font-medium text-gray-500 w-32">Name:</span>
+                  <span className="text-gray-800">{customerData.customer_info.full_name}</span>
+                </div>
+                <div className="flex">
+                  <span className="font-medium text-gray-500 w-32">Email:</span>
+                  <span className="text-gray-800">{customerData.customer_info.email}</span>
+                </div>
+                <div className="flex">
+                  <span className="font-medium text-gray-500 w-32">Phone:</span>
+                  <span className="text-gray-800">{customerData.customer_info.phone}</span>
+                </div>
+                <div className="flex">
+                  <span className="font-medium text-gray-500 w-32">Company:</span>
+                  <span className="text-gray-800">{customerData.customer_info.company_name || 'Not specified'}</span>
+                </div>
+                <div className="flex">
+                  <span className="font-medium text-gray-500 w-32">Tax ID:</span>
+                  <span className="text-gray-800">{customerData.customer_info.tax_id || 'Not specified'}</span>
+                </div>
+                <div className="flex">
+                  <span className="font-medium text-gray-500 w-32">Credit Limit:</span>
+                  <span className="text-gray-800">₹{customerData.customer_info.credit_limit.toLocaleString()}</span>
+                </div>
+                <div className="flex">
+                  <span className="font-medium text-gray-500 w-32">Payment Terms:</span>
+                  <span className="text-gray-800">{customerData.customer_info.payment_terms || 'Standard'}</span>
+                </div>
+              </div>
             </div>
-            <p className="text-indigo-500">You don't have any recent shipments.</p>
+            
+            {/* Shipment Summary Card */}
+            <div className="bg-white rounded-lg shadow-md p-6 mt-6">
+              <h2 className="text-xl font-semibold text-gray-800 mb-4">Shipment Summary</h2>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-purple-50 rounded-lg p-4 text-center">
+                  <span className="block text-3xl font-bold text-purple-600">
+                    {customerData.shipments.length}
+                  </span>
+                  <span className="text-sm text-gray-600">Total Shipments</span>
+                </div>
+                
+                <div className="bg-green-50 rounded-lg p-4 text-center">
+                  <span className="block text-3xl font-bold text-green-600">
+                    {customerData.shipments.filter(s => s.status === 'delivered').length}
+                  </span>
+                  <span className="text-sm text-gray-600">Delivered</span>
+                </div>
+                
+                <div className="bg-yellow-50 rounded-lg p-4 text-center">
+                  <span className="block text-3xl font-bold text-yellow-600">
+                    {customerData.shipments.filter(s => ['pending', 'picked_up', 'in_transit'].includes(s.status)).length}
+                  </span>
+                  <span className="text-sm text-gray-600">In Progress</span>
+                </div>
+                
+                <div className="bg-red-50 rounded-lg p-4 text-center">
+                  <span className="block text-3xl font-bold text-red-600">
+                    {customerData.shipments.filter(s => s.status === 'returned').length}
+                  </span>
+                  <span className="text-sm text-gray-600">Returned</span>
+                </div>
+              </div>
+            </div>
           </div>
-        ) : (
-          <div className="overflow-x-auto rounded-xl">
-            <table className="min-w-full divide-y divide-indigo-200">
-              <thead className="bg-indigo-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Tracking #
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Route
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Created
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-indigo-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-indigo-100">
-                {stats.recentShipments.map((shipment) => (
-                  <tr key={shipment.shipment_id} className="hover:bg-indigo-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-yellow-600">
-                        {shipment.tracking_number}
+          
+          {/* Shipments Section */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-semibold text-gray-800">My Shipments</h2>
+                
+                <div className="flex">
+                  <select
+                    value={shipmentFilter}
+                    onChange={(e) => setShipmentFilter(e.target.value)}
+                    className="rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  >
+                    <option value="all">All Shipments</option>
+                    <option value="pending">Pending</option>
+                    <option value="picked_up">Picked Up</option>
+                    <option value="in_transit">In Transit</option>
+                    <option value="delivered">Delivered</option>
+                    <option value="returned">Returned</option>
+                  </select>
+                </div>
+              </div>
+              
+              {filteredShipments().length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No shipments found matching your filter.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tracking #</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Origin</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Destination</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Est. Delivery</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {filteredShipments().map((shipment) => (
+                        <tr key={shipment.shipment_id} className="hover:bg-gray-50">
+                          <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-purple-600">
+                            {shipment.tracking_number}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-800">{shipment.origin}</td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-800">{shipment.destination}</td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">{formatDate(shipment.created_at)}</td>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">{formatDate(shipment.estimated_delivery)}</td>
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 text-xs rounded-full ${getStatusBadgeClass(shipment.status)}`}>
+                              {shipment.status.replace('_', ' ')}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            
+            {/* Shipment Items Section */}
+            <div className="bg-white rounded-lg shadow-md p-6 mt-6">
+              <h2 className="text-xl font-semibold text-gray-800 mb-4">Recent Shipment Items</h2>
+              
+              {!customerData.shipment_items || customerData.shipment_items.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No shipment items found.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {customerData.shipment_items.slice(0, 6).map((item) => (
+                    <div key={item.item_id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                      <div className="font-medium text-purple-700 mb-2">{item.description}</div>
+                      <div className="grid grid-cols-2 gap-x-4 text-sm">
+                        <div className="text-gray-600">Quantity:</div>
+                        <div className="text-gray-900">{item.quantity}</div>
+                        
+                        <div className="text-gray-600">Weight:</div>
+                        <div className="text-gray-900">{item.weight} kg</div>
+                        
+                        <div className="text-gray-600">Volume:</div>
+                        <div className="text-gray-900">{item.volume} m³</div>
+                        
+                        <div className="text-gray-600">Value:</div>
+                        <div className="text-gray-900">₹{item.item_value.toLocaleString()}</div>
+                        
+                        {item.is_fragile && (
+                          <div className="col-span-2 mt-2">
+                            <span className="bg-orange-100 text-orange-800 text-xs font-medium px-2 py-0.5 rounded">Fragile</span>
+                          </div>
+                        )}
+                        
+                        {item.is_hazardous && (
+                          <div className="col-span-2 mt-2">
+                            <span className="bg-red-100 text-red-800 text-xs font-medium px-2 py-0.5 rounded">Hazardous</span>
+                          </div>
+                        )}
                       </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-indigo-900">
-                        {shipment.origin} → {shipment.destination}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusClass(shipment.status)}`}>
-                        {shipment.status.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-500">
-                        {new Date(shipment.created_at || shipment.pickup_date).toLocaleDateString()}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex space-x-2">
-                        <Link
-                          to={`/tracking?id=${shipment.shipment_id}`}
-                          className="bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-3 py-1 rounded text-xs flex items-center"
-                        >
-                          <i className="fas fa-map-marker-alt mr-1"></i> Track
-                        </Link>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </div>
       </div>
-
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-        <Link to="/customer/new-shipment" className="bg-gradient-to-r from-indigo-50 to-indigo-100 hover:from-indigo-100 hover:to-indigo-200 p-4 rounded-lg border border-indigo-200 transition-colors group">
-          <div className="flex items-center">
-            <div className="bg-indigo-200 group-hover:bg-indigo-300 p-3 rounded-full mr-3 transition-colors">
-              <i className="fas fa-plus text-indigo-700"></i>
-            </div>
-            <span className="text-indigo-800 font-medium">Create New Shipment</span>
+      
+      {/* Edit Profile Modal */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">Edit Profile</h2>
+            
+            <form onSubmit={handleEditSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Full Name</label>
+                <input
+                  type="text"
+                  value={editFormData.full_name}
+                  onChange={(e) => setEditFormData({ ...editFormData, full_name: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Email</label>
+                <input
+                  type="email"
+                  value={editFormData.email}
+                  onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Phone</label>
+                <input
+                  type="tel"
+                  value={editFormData.phone}
+                  onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Company Name</label>
+                <input
+                  type="text"
+                  value={editFormData.company_name}
+                  onChange={(e) => setEditFormData({ ...editFormData, company_name: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Tax ID</label>
+                <input
+                  type="text"
+                  value={editFormData.tax_id}
+                  onChange={(e) => setEditFormData({ ...editFormData, tax_id: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                />
+              </div>
+              
+              <div className="flex justify-end space-x-4 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
           </div>
-        </Link>
-
-        <Link to="/customer/profile" className="bg-gradient-to-r from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 p-4 rounded-lg border border-blue-200 transition-colors group">
-          <div className="flex items-center">
-            <div className="bg-blue-200 group-hover:bg-blue-300 p-3 rounded-full mr-3 transition-colors">
-              <i className="fas fa-user text-blue-700"></i>
-            </div>
-            <span className="text-blue-800 font-medium">Your Profile</span>
-          </div>
-        </Link>
-
-        <Link to="/customer/shipments" className="bg-gradient-to-r from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 p-4 rounded-lg border border-green-200 transition-colors group">
-          <div className="flex items-center">
-            <div className="bg-green-200 group-hover:bg-green-300 p-3 rounded-full mr-3 transition-colors">
-              <i className="fas fa-boxes text-green-700"></i>
-            </div>
-            <span className="text-green-800 font-medium">All Shipments</span>
-          </div>
-        </Link>
-      </div>
+        </div>
+      )}
     </div>
   );
 };
