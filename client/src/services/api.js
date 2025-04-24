@@ -7,10 +7,15 @@ const api = axios.create({
   }
 });
 
+// Add a comment to clarify the API path structure
+// IMPORTANT: When making requests with this client, DO NOT prefix paths with '/api'
+// Example: use api.get('/drivers') instead of api.get('/api/drivers')
+
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
-    // You can add auth token here if needed
+    // Log the request for debugging
+    console.log(`Making ${config.method.toUpperCase()} request to: ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => {
