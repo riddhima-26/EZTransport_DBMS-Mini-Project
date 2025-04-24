@@ -54,15 +54,12 @@ def initialize_stored_procedures():
             JOIN shipments s ON si.shipment_id = s.shipment_id
             WHERE si.shipment_id IN (
                 SELECT shipment_id 
-                FROM (
-                    SELECT shipment_id 
-                    FROM shipments 
-                    WHERE customer_id = (
-                        SELECT customer_id FROM customers WHERE user_id = uid
-                    )
-                    ORDER BY created_at DESC
-                    LIMIT 5
-                ) AS recent_shipments
+                FROM shipments 
+                WHERE customer_id = (
+                    SELECT customer_id FROM customers WHERE user_id = uid
+                )
+                ORDER BY created_at DESC
+                LIMIT 5
             )
             ORDER BY s.created_at DESC;
         END
@@ -122,28 +119,6 @@ def initialize_stored_procedures():
             ORDER BY te.event_timestamp DESC
             LIMIT 10;
         END
-        """)
-
-        # Drop trigger if it already exists
-        cur.execute("DROP TRIGGER IF EXISTS after_user_insert")
-
-        # Create a trigger for new user registration
-        cur.execute("""
-        CREATE TRIGGER after_user_insert
-        AFTER INSERT ON users
-        FOR EACH ROW
-        BEGIN
-            INSERT INTO logs (message, created_at) VALUES ('NEW REGISTER DIRECTED', NOW());
-        END;
-        """)
-
-        # Create the 'logs' table if it doesn't exist
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS logs (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            message VARCHAR(255) NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
         """)
 
         mysql.connection.commit()
@@ -2179,7 +2154,8 @@ def register():
             
         # Validate type-specific fields
         if user_type == 'customer' and not company_name:
-            return jsonify({'error': 'Company name is required for customer registration'})
+            return jsonify({'error': 'Company name is required for customer registration'}), 400
+            
         if user_type == 'driver' and not all([license_number, license_expiry]):
             return jsonify({'error': 'License information is required for driver registration'}), 400
         
@@ -2334,8 +2310,8 @@ def get_driver_dashboard(user_id):
         cur.execute("""
             SELECT s.*, 
                    c.company_name,
-                   CONCAT(o.city, ', ', o.state) AS origin,
-                   CONCAT(d.city, ', ', d.state) AS destination,
+                   CONCAT(o.city, ', ', o.state) as origin,
+                   CONCAT(d.city, ', ', d.state) as destination,
                    v.license_plate
             FROM shipments s
             LEFT JOIN customers c ON s.customer_id = c.customer_id
