@@ -14,6 +14,7 @@ import RoutesManagement from './pages/RoutesManagement';
 import Tracking from './pages/Tracking';
 import ShipmentItems from './pages/ShipmentItems';
 import Unauthorized from './pages/Unauthorized';
+import SignUp from './pages/SignUp';
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<SignUp />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
           <Route path="/*" element={
             <PrivateRoute>

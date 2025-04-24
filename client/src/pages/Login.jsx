@@ -200,17 +200,22 @@ export default function Login() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full bg-gradient-to-r from-yellow-500 to-yellow-600 text-blue-950 py-3 px-4 rounded-xl hover:from-yellow-400 hover:to-yellow-500 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+            className={`w-full bg-gradient-to-r from-yellow-500 to-amber-600 text-indigo-950 py-3 rounded-xl font-medium hover:from-yellow-400 hover:to-amber-500 transition-all duration-300 shadow-lg hover:shadow-xl ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
           >
-            {isLoading ? (
-              <span className="flex items-center justify-center">
-                <i className="fas fa-spinner fa-spin mr-2"></i>
-                Logging in...
-              </span>
-            ) : (
-              'Login'
-            )}
+            {isLoading ? 'Logging in...' : 'Sign In'}
           </button>
+          
+          <div className="text-center mt-4">
+            <p className="text-blue-100">
+              Don't have an account? {' '}
+              <a 
+                href="/signup" 
+                className="text-yellow-300 hover:text-yellow-200 font-medium transition-colors duration-200"
+              >
+                Sign Up
+              </a>
+            </p>
+          </div>
         </form>
 
         <div className="mt-8 text-center text-sm text-blue-200">

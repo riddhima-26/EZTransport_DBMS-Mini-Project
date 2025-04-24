@@ -145,7 +145,7 @@ export default function Customers() {
                       onClick={() => handleDelete(customer.customer_id)}
                       className="text-red-600 hover:text-red-900"
                     >
-                      <></>
+                      <i className="fas fa-trash"></i>
                     </button>
                   </td>
                 </tr>

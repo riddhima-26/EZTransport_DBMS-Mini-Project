@@ -481,7 +481,7 @@ def login():
                     'user_type': user['user_type']
                 }
             })
-        
+        else:
             print(f"Login failed for user: {username}")  # Debug print
             return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
     except Exception as e:
@@ -519,50 +519,79 @@ def get_stats():
 
 @app.route('/api/shipments', methods=['GET'])
 def get_shipments():
-    cur = mysql.connection.cursor()
     try:
-        # Get user information from request
+        cur = mysql.connection.cursor()
+        
+        # Get URL parameters
         user_id = request.args.get('user_id')
         user_type = request.args.get('user_type')
         
+        # Base query with proper joins
         query = """
-            SELECT s.shipment_id, s.tracking_number, s.status, 
-                   CONCAT(l1.city, ', ', l1.state) as origin,
-                   CONCAT(l2.city, ', ', l2.state) as destination,
-                   s.created_at, c.company_name as customer_name, 
-                   COALESCE(u.full_name, 'Unassigned') as driver_name
+            SELECT s.*, 
+                   c.company_name,
+                   CONCAT(o.city, ', ', o.state) as origin,
+                   CONCAT(d.city, ', ', d.state) as destination,
+                   u.full_name as driver_name,
+                   v.license_plate,
+                   dr.driver_id,
+                   c.customer_id
             FROM shipments s
-            JOIN locations l1 ON s.origin_id = l1.location_id
-            JOIN locations l2 ON s.destination_id = l2.location_id
-            JOIN customers c ON s.customer_id = c.customer_id
-            LEFT JOIN drivers d ON s.driver_id = d.driver_id
-            LEFT JOIN users u ON d.user_id = u.user_id
+            LEFT JOIN customers c ON s.customer_id = c.customer_id
+            LEFT JOIN locations o ON s.origin_id = o.location_id
+            LEFT JOIN locations d ON s.destination_id = d.location_id
+            LEFT JOIN drivers dr ON s.driver_id = dr.driver_id
+            LEFT JOIN users u ON dr.user_id = u.user_id
+            LEFT JOIN vehicles v ON s.vehicle_id = v.vehicle_id
         """
         
         params = []
+        where_clauses = []
         
-        # Filter based on user role
-        if user_type == 'driver' and user_id:
-            # For drivers, only show shipments assigned to them
-            query += " JOIN drivers dr ON s.driver_id = dr.driver_id WHERE dr.user_id = %s"
-            params.append(user_id)
-        elif user_type == 'customer' and user_id:
-            # For customers, only show shipments belonging to them
-            query += " JOIN customers cu ON s.customer_id = cu.customer_id WHERE cu.user_id = %s"
-            params.append(user_id)
-            
+        # Filter by user_id and user_type if provided
+        if user_id and user_type:
+            if user_type == 'customer':
+                # For customers, find their customer_id first
+                cur.execute("SELECT customer_id FROM customers WHERE user_id = %s", [user_id])
+                customer = cur.fetchone()
+                if customer:
+                    where_clauses.append("s.customer_id = %s")
+                    params.append(customer['customer_id'])
+            elif user_type == 'driver':
+                # For drivers, find their driver_id first
+                cur.execute("SELECT driver_id FROM drivers WHERE user_id = %s", [user_id])
+                driver = cur.fetchone()
+                if driver:
+                    where_clauses.append("s.driver_id = %s")
+                    params.append(driver['driver_id'])
+        
+        # Add WHERE clause if needed
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+        
+        # Add order by
         query += " ORDER BY s.created_at DESC"
         
-        if params:
-            cur.execute(query, params)
-        else:
-            cur.execute(query)
-            
+        # Execute query with parameters
+        cur.execute(query, params)
         shipments = cur.fetchall()
+        
+        # Process results
+        for shipment in shipments:
+            # Convert datetime objects to string format
+            if 'created_at' in shipment:
+                shipment['created_at'] = shipment['created_at'].isoformat() if shipment['created_at'] else None
+            if 'pickup_date' in shipment:
+                shipment['pickup_date'] = shipment['pickup_date'].isoformat() if shipment['pickup_date'] else None
+            if 'estimated_delivery' in shipment:
+                shipment['estimated_delivery'] = shipment['estimated_delivery'].isoformat() if shipment['estimated_delivery'] else None
+            if 'actual_delivery' in shipment:
+                shipment['actual_delivery'] = shipment['actual_delivery'].isoformat() if shipment['actual_delivery'] else None
+        
         cur.close()
         return jsonify(shipments)
     except Exception as e:
-        cur.close()
+        print(f"Error in get_shipments: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/shipments/<int:id>', methods=['DELETE'])
@@ -800,539 +829,427 @@ def update_shipment(id):
 
 @app.route('/api/shipments/<int:id>', methods=['GET'])
 def get_shipment(id):
-    cur = mysql.connection.cursor()
     try:
+        cur = mysql.connection.cursor()
+        
+        # Get the shipment details with joins for origin/destination location names
         cur.execute("""
             SELECT s.*, 
-                   CONCAT(o.city, ', ', o.state) as origin_location,
-                   CONCAT(d.city, ', ', d.state) as destination_location,
-                   c.company_name, u.full_name as customer_name,
-                   v.license_plate, v.make, v.model,
-                   du.full_name as driver_name
+                   CONCAT(o.city, ', ', o.state) as origin,
+                   CONCAT(d.city, ', ', d.state) as destination,
+                   u.full_name as driver_name,
+                   v.license_plate,
+                   c.company_name
             FROM shipments s
-            JOIN locations o ON s.origin_id = o.location_id
-            JOIN locations d ON s.destination_id = d.location_id
-            JOIN customers c ON s.customer_id = c.customer_id
-            JOIN users u ON c.user_id = u.user_id
-            LEFT JOIN vehicles v ON s.vehicle_id = v.vehicle_id
+            LEFT JOIN customers c ON s.customer_id = c.customer_id
+            LEFT JOIN locations o ON s.origin_id = o.location_id
+            LEFT JOIN locations d ON s.destination_id = d.location_id
             LEFT JOIN drivers dr ON s.driver_id = dr.driver_id
-            LEFT JOIN users du ON dr.user_id = du.user_id
+            LEFT JOIN users u ON dr.user_id = u.user_id
+            LEFT JOIN vehicles v ON s.vehicle_id = v.vehicle_id
             WHERE s.shipment_id = %s
         """, (id,))
         
         shipment = cur.fetchone()
         
         if not shipment:
-            return jsonify({'success': False, 'error': 'Shipment not found'}), 404
-        
-        # Get shipment items
-        cur.execute("""
-            SELECT * FROM shipment_items WHERE shipment_id = %s
-        """, (id,))
-        
-        items = cur.fetchall()
-        shipment['items'] = items
-        
-        # Get tracking events
-        cur.execute("""
-            SELECT e.*, 
-                  CONCAT(l.city, ', ', l.state) as location_name,
-                  u.full_name as recorded_by_name
-            FROM tracking_events e
-            LEFT JOIN locations l ON e.location_id = l.location_id
-            LEFT JOIN users u ON e.recorded_by = u.user_id
-            WHERE e.shipment_id = %s
-            ORDER BY e.event_timestamp DESC
-        """, (id,))
-        
-        events = cur.fetchall()
-        shipment['tracking_events'] = events
-        
+            return jsonify({'error': 'Shipment not found'}), 404
+            
+        # Convert datetime objects to string format
+        if shipment['created_at']:
+            shipment['created_at'] = shipment['created_at'].isoformat()
+        if shipment['pickup_date']:
+            shipment['pickup_date'] = shipment['pickup_date'].isoformat()
+        if shipment['estimated_delivery']:
+            shipment['estimated_delivery'] = shipment['estimated_delivery'].isoformat()
+        if shipment['actual_delivery']:
+            shipment['actual_delivery'] = shipment['actual_delivery'].isoformat()
+            
+        cur.close()
         return jsonify(shipment)
-        
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        cur.close()
-
-@app.route('/api/shipments/<int:id>/items', methods=['GET'])
-def get_shipment_items(id):
-    cur = mysql.connection.cursor()
-    try:
-        cur.execute("SELECT * FROM shipment_items WHERE shipment_id = %s", (id,))
-        items = cur.fetchall()
-        return jsonify(items)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        cur.close()
-
-@app.route('/api/shipments/<int:id>/events', methods=['GET'])
-def get_shipment_events(id):
-    cur = mysql.connection.cursor()
-    try:
-        cur.execute("""
-            SELECT e.*, 
-                  CONCAT(l.city, ', ', l.state) as location_name,
-                  u.full_name as recorded_by_name
-            FROM tracking_events e
-            LEFT JOIN locations l ON e.location_id = l.location_id
-            LEFT JOIN users u ON e.recorded_by = u.user_id
-            WHERE e.shipment_id = %s
-            ORDER BY e.event_timestamp DESC
-        """, (id,))
-        
-        events = cur.fetchall()
-        return jsonify(events)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        cur.close()
-
-@app.route('/api/vehicles', methods=['GET'])
-def get_vehicles():
-    cur = mysql.connection.cursor()
-    try:
-        # Get basic vehicle information with location details
-        query = """
-            SELECT 
-                v.vehicle_id, v.license_plate, 
-                v.make, v.model, v.year,
-                v.capacity_kg, v.vehicle_type, v.status,
-                v.last_inspection_date,
-                COALESCE(CONCAT(l.city, ', ', l.state), 'Unknown') as current_location
-            FROM 
-                vehicles v
-            LEFT JOIN 
-                locations l ON v.current_location_id = l.location_id
-            ORDER BY 
-                v.vehicle_id ASC
-        """
-        
-        cur.execute(query)
-        vehicles = cur.fetchall()
-        cur.close()
-        return jsonify(vehicles)
-    except Exception as e:
-        cur.close()
+        print(f"Error in get_shipment: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/vehicles/<int:id>', methods=['DELETE'])
-def delete_vehicle(id):
-    cur = mysql.connection.cursor()
-    try:
-        cur.execute("DELETE FROM vehicles WHERE vehicle_id = %s", (id,))
-        mysql.connection.commit()
-        return jsonify({'success': True})
-    except Exception as e:
-        mysql.connection.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        cur.close()
-
-@app.route('/api/customers', methods=['GET'])
-def get_customers():
-    cur = mysql.connection.cursor()
-    cur.execute("""
-        SELECT c.customer_id, u.full_name, c.company_name,
-               c.tax_id, c.credit_limit, c.payment_terms,
-               u.email, u.phone
-        FROM customers c
-        JOIN users u ON c.user_id = u.user_id
-        ORDER BY c.customer_id
-    """)
-    customers = cur.fetchall()
-    cur.close()
-    return jsonify(customers)
-
-@app.route('/api/customers', methods=['POST'])
-def create_customer():
-    cur = mysql.connection.cursor()
-    try:
-        data = request.get_json()
-        
-        # First create the user
-        cur.execute("""
-            INSERT INTO users (username, full_name, email, phone, user_type, password)
-            VALUES (%s, %s, %s, %s, 'customer', %s)
-        """, (
-            data['email'],  # Using email as username
-            data['full_name'],
-            data['email'],
-            data['phone'],
-            data.get('password', 'default_password')  # In production, use proper password hashing
-        ))
-        user_id = cur.lastrowid
-        
-        # Then create the customer
-        cur.execute("""
-            INSERT INTO customers (user_id, company_name, tax_id, credit_limit)
-            VALUES (%s, %s, %s, %s)
-        """, (
-            user_id,
-            data['company_name'],
-            data['tax_id'],
-            data['credit_limit']
-        ))
-        
-        mysql.connection.commit()
-        
-        # Fetch the created customer
-        cur.execute("""
-            SELECT c.customer_id, u.full_name, c.company_name,
-                   c.tax_id, c.credit_limit, c.payment_terms,
-                   u.email, u.phone
-            FROM customers c
-            JOIN users u ON c.user_id = u.user_id
-            WHERE c.customer_id = %s
-        """, (cur.lastrowid,))
-        
-        customer = cur.fetchone()
-        return jsonify(customer)
-        
-    except Exception as e:
-        mysql.connection.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        cur.close()
-
-@app.route('/api/customers/<int:id>', methods=['DELETE'])
-def delete_customer(id):
-    cur = mysql.connection.cursor()
-    try:
-        # First get user_id to delete from users table
-        cur.execute("SELECT user_id FROM customers WHERE customer_id = %s", (id,))
-        customer = cur.fetchone()
-        if not customer:
-            return jsonify({'success': False, 'error': 'Customer not found'}), 404
-            
-        user_id = customer['user_id']
-        
-        # Delete from customers table
-        cur.execute("DELETE FROM customers WHERE customer_id = %s", (id,))
-        
-        # Delete from users table
-        cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
-        
-        mysql.connection.commit()
-        return jsonify({'success': True})
-    except Exception as e:
-        mysql.connection.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        cur.close()
-
-@app.route('/api/customers/<int:id>', methods=['PUT'])
-def update_customer(id):
-    cur = mysql.connection.cursor()
-    try:
-        data = request.get_json()
-        
-        # First get the user_id
-        cur.execute("SELECT user_id FROM customers WHERE customer_id = %s", (id,))
-        customer = cur.fetchone()
-        if not customer:
-            return jsonify({'success': False, 'error': 'Customer not found'}), 404
-            
-        user_id = customer['user_id']
-        
-        # Update the user
-        cur.execute("""
-            UPDATE users 
-            SET full_name = %s, email = %s, phone = %s
-            WHERE user_id = %s
-        """, (
-            data['full_name'],
-            data['email'],
-            data['phone'],
-            user_id
-        ))
-        
-        # Update the customer
-        cur.execute("""
-            UPDATE customers 
-            SET company_name = %s, tax_id = %s, credit_limit = %s
-            WHERE customer_id = %s
-        """, (
-            data['company_name'],
-            data['tax_id'],
-            data['credit_limit'],
-            id
-        ))
-        
-        mysql.connection.commit()
-        
-        # Fetch the updated customer
-        cur.execute("""
-            SELECT c.customer_id, u.full_name, c.company_name,
-                   c.tax_id, c.credit_limit, c.payment_terms,
-                   u.email, u.phone
-            FROM customers c
-            JOIN users u ON c.user_id = u.user_id
-            WHERE c.customer_id = %s
-        """, (id,))
-        
-        updated_customer = cur.fetchone()
-        return jsonify(updated_customer)
-        
-    except Exception as e:
-        mysql.connection.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        cur.close()
-
-@app.route('/api/drivers', methods=['GET'])
-def get_drivers():
+@app.route('/api/shipments/<int:id>/events', methods=['GET'])
+def get_shipment_tracking_events(id):
     try:
         cur = mysql.connection.cursor()
         
-        try:
-            # Use the exact working query
-            query = """
-                SELECT 
-                    d.driver_id,
-                    u.full_name,
-                    u.email,
-                    u.phone,
-                    d.license_number,
-                    DATE_FORMAT(d.license_expiry, '%Y-%m-%d') as license_expiry,
-                    DATE_FORMAT(d.medical_check_date, '%Y-%m-%d') as medical_check_date,
-                    d.training_certification,
-                    d.status
-                FROM drivers d
-                JOIN users u ON d.user_id = u.user_id
-                ORDER BY d.driver_id
-            """
-            
-            cur.execute(query)
-            drivers = cur.fetchall()
-            
-            return jsonify({
-                'drivers': drivers,
-                'total': len(drivers)
-            })
-
-        except Exception as mysql_error:
-            print("MySQL Error Details:")
-            print(f"Error Type: {type(mysql_error).__name__}")
-            print(f"Error Message: {str(mysql_error)}")
-            return jsonify({'error': f'Database error: {str(mysql_error)}'}), 500
-            
-        finally:
-            cur.close()
-
+        # Get tracking events for a specific shipment with location information
+        cur.execute("""
+            SELECT te.*, 
+                   CONCAT(l.city, ', ', l.state) as location,
+                   u.full_name as recorded_by_name
+            FROM tracking_events te
+            LEFT JOIN locations l ON te.location_id = l.location_id
+            LEFT JOIN users u ON te.recorded_by = u.user_id
+            WHERE te.shipment_id = %s
+            ORDER BY te.event_timestamp DESC
+        """, (id,))
+        
+        events = cur.fetchall()
+        
+        # Convert datetime objects to string format
+        for event in events:
+            if event['event_timestamp']:
+                event['event_timestamp'] = event['event_timestamp'].isoformat()
+        
+        cur.close()
+        return jsonify(events)
     except Exception as e:
-        print("General Error Details:")
-        print(f"Error Type: {type(e).__name__}")
-        print(f"Error Message: {str(e)}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
+        print(f"Error in get_shipment_tracking_events: {e}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/drivers', methods=['POST'])
-def create_driver():
-    cur = mysql.connection.cursor()
+@app.route('/api/tracking-events', methods=['GET'])
+def get_tracking_events():
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Get all tracking events with additional info
+        cur.execute("""
+            SELECT te.*, 
+                   s.tracking_number,
+                   CONCAT(l.city, ', ', l.state) as location,
+                   u.full_name as recorded_by_name
+            FROM tracking_events te
+            JOIN shipments s ON te.shipment_id = s.shipment_id
+            LEFT JOIN locations l ON te.location_id = l.location_id
+            LEFT JOIN users u ON te.recorded_by = u.user_id
+            ORDER BY te.event_timestamp DESC
+            LIMIT 100
+        """)
+        
+        events = cur.fetchall()
+        
+        # Convert datetime objects to string format
+        for event in events:
+            if event['event_timestamp']:
+                event['event_timestamp'] = event['event_timestamp'].isoformat()
+        
+        cur.close()
+        return jsonify(events)
+    except Exception as e:
+        print(f"Error in get_tracking_events: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tracking-events', methods=['POST'])
+def create_tracking_event():
     try:
         data = request.get_json()
+        cur = mysql.connection.cursor()
         
-        # First create the user
+        # Validate required fields
+        required_fields = ['shipment_id', 'event_type', 'location_id']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+                
+        # Insert the tracking event
         cur.execute("""
-            INSERT INTO users (username, full_name, email, phone, user_type, password)
-            VALUES (%s, %s, %s, %s, 'driver', %s)
+            INSERT INTO tracking_events 
+            (shipment_id, event_type, location_id, notes, recorded_by)
+            VALUES (%s, %s, %s, %s, %s)
         """, (
-            data['email'],  # Using email as username
-            data['full_name'],
-            data['email'],
-            data['phone'],
-            data.get('password', 'default_password')  # In production, use proper password hashing
-        ))
-        user_id = cur.lastrowid
-        
-        # Then create the driver
-        cur.execute("""
-            INSERT INTO drivers (user_id, license_number, license_expiry, medical_check_date, training_certification, status)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (
-            user_id,
-            data['license_number'],
-            data['license_expiry'],
-            data['medical_check_date'] if data['medical_check_date'] else None,
-            data['training_certification'],
-            data['status']
+            data['shipment_id'],
+            data['event_type'],
+            data['location_id'],
+            data.get('notes', ''),
+            data.get('recorded_by', 1)  # Default to admin user if not specified
         ))
         
         mysql.connection.commit()
-        driver_id = cur.lastrowid
+        event_id = cur.lastrowid
         
-        # Fetch and return the newly created driver
-        cur.execute("""
-            SELECT 
-                d.driver_id,
-                u.full_name,
-                u.email,
-                u.phone, 
-                d.license_number,
-                DATE_FORMAT(d.license_expiry, '%Y-%m-%d') as license_expiry,
-                DATE_FORMAT(d.medical_check_date, '%Y-%m-%d') as medical_check_date,
-                d.training_certification,
-                d.status
-            FROM drivers d
-            JOIN users u ON d.user_id = u.user_id
-            WHERE d.driver_id = %s
-        """, (driver_id,))
+        # Update shipment status based on event type
+        status_mapping = {
+            'pickup': 'picked_up',
+            'departure': 'in_transit',
+            'delivery': 'delivered'
+        }
         
-        new_driver = cur.fetchone()
-        return jsonify(new_driver)
-        
-    except Exception as e:
-        mysql.connection.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
+        if data['event_type'] in status_mapping:
+            cur.execute("""
+                UPDATE shipments
+                SET status = %s
+                WHERE shipment_id = %s
+            """, (
+                status_mapping[data['event_type']],
+                data['shipment_id']
+            ))
+            mysql.connection.commit()
+            
         cur.close()
+        return jsonify({'success': True, 'event_id': event_id})
+    except Exception as e:
+        print(f"Error in create_tracking_event: {e}")
+        mysql.connection.rollback()
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/drivers/<int:id>', methods=['PUT'])
-def update_driver(id):
-    cur = mysql.connection.cursor()
+@app.route('/api/tracking-events/<int:id>', methods=['PUT'])
+def update_tracking_event(id):
     try:
         data = request.get_json()
+        cur = mysql.connection.cursor()
         
-        # First get the user_id
-        cur.execute("SELECT user_id FROM drivers WHERE driver_id = %s", (id,))
-        driver = cur.fetchone()
-        if not driver:
-            return jsonify({'success': False, 'error': 'Driver not found'}), 404
+        # Validate that event exists
+        cur.execute("SELECT * FROM tracking_events WHERE event_id = %s", (id,))
+        if not cur.fetchone():
+            return jsonify({'error': 'Tracking event not found'}), 404
             
-        user_id = driver['user_id']
-        
-        # Update the user info
+        # Update the tracking event
         cur.execute("""
-            UPDATE users 
-            SET full_name = %s, email = %s, phone = %s
-            WHERE user_id = %s
+            UPDATE tracking_events 
+            SET event_type = %s,
+                location_id = %s,
+                notes = %s
+            WHERE event_id = %s
         """, (
-            data['full_name'],
-            data['email'],
-            data['phone'],
-            user_id
-        ))
-        
-        # Update the driver info
-        cur.execute("""
-            UPDATE drivers 
-            SET license_number = %s, 
-                license_expiry = %s, 
-                medical_check_date = %s, 
-                training_certification = %s, 
-                status = %s
-            WHERE driver_id = %s
-        """, (
-            data['license_number'],
-            data['license_expiry'],
-            data['medical_check_date'] if data['medical_check_date'] else None,
-            data['training_certification'],
-            data['status'],
+            data['event_type'],
+            data['location_id'],
+            data.get('notes', ''),
             id
         ))
         
         mysql.connection.commit()
-        
-        # Fix: Escape the % character by doubling it (%%) to prevent Python from treating it as a format specifier
-        cur.execute("""
-            SELECT 
-                d.driver_id,
-                u.full_name,
-                u.email,
-                u.phone, 
-                d.license_number,
-                DATE_FORMAT(d.license_expiry, '%%Y-%%m-%%d') as license_expiry,
-                DATE_FORMAT(d.medical_check_date, '%%Y-%%m-%%d') as medical_check_date,
-                d.training_certification,
-                d.status
-            FROM drivers d
-            JOIN users u ON d.user_id = u.user_id
-            WHERE d.driver_id = %s
-        """, (id,))
-        
-        updated_driver = cur.fetchone()
-        return jsonify(updated_driver)
-        
-    except Exception as e:
-        mysql.connection.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
         cur.close()
-
-@app.route('/api/drivers/<int:id>', methods=['DELETE'])
-def delete_driver(id):
-    cur = mysql.connection.cursor()
-    try:
-        # First check if driver exists and get user_id
-        cur.execute("SELECT user_id FROM drivers WHERE driver_id = %s", (id,))
-        driver = cur.fetchone()
-        if not driver:
-            return jsonify({'success': False, 'error': 'Driver not found'}), 404
-            
-        user_id = driver['user_id']
-        
-        # Check if driver is assigned to any shipments
-        cur.execute("SELECT COUNT(*) as count FROM shipments WHERE driver_id = %s", (id,))
-        result = cur.fetchone()
-        if result['count'] > 0:
-            return jsonify({
-                'success': False, 
-                'error': f"Cannot delete driver: assigned to {result['count']} shipment(s)"
-            }), 400
-        
-        # Delete from drivers table
-        cur.execute("DELETE FROM drivers WHERE driver_id = %s", (id,))
-        
-        # Delete from users table
-        cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
-        
-        mysql.connection.commit()
         return jsonify({'success': True})
     except Exception as e:
+        print(f"Error in update_tracking_event: {e}")
         mysql.connection.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tracking-events/<int:id>', methods=['DELETE'])
+def delete_tracking_event(id):
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Validate that event exists
+        cur.execute("SELECT * FROM tracking_events WHERE event_id = %s", (id,))
+        if not cur.fetchone():
+            return jsonify({'error': 'Tracking event not found'}), 404
+            
+        # Delete the tracking event
+        cur.execute("DELETE FROM tracking_events WHERE event_id = %s", (id,))
+        
+        mysql.connection.commit()
         cur.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Error in delete_tracking_event: {e}")
+        mysql.connection.rollback()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/locations', methods=['GET'])
 def get_locations():
-    cur = mysql.connection.cursor()
     try:
-        # Get all locations with additional info
-        cur.execute("""
-            SELECT 
-                l.location_id, l.address, l.city, l.state, 
-                l.country, l.postal_code, l.location_type,
-                l.latitude, l.longitude
-            FROM 
-                locations l
-            ORDER BY 
-                l.city ASC, l.state ASC
-        """)
-        
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT * FROM locations ORDER BY city, state")
         locations = cur.fetchall()
         cur.close()
         return jsonify(locations)
     except Exception as e:
-        cur.close()
+        print(f"Error in get_locations: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/locations/<int:id>', methods=['PUT'])
+def update_location(id):
+    cur = mysql.connection.cursor()
+    try:
+        data = request.get_json()
+        
+        # Update the location
+        cur.execute("""
+            UPDATE locations 
+            SET address = %s,
+                city = %s,
+                state = %s,
+                postal_code = %s,
+                country = %s,
+                latitude = %s,
+                longitude = %s,
+                location_type = %s
+            WHERE location_id = %s
+        """, (
+            data['address'],
+            data['city'],
+            data['state'],
+            data['postal_code'],
+            data['country'],
+            data.get('latitude'),
+            data.get('longitude'),
+            data['location_type'],
+            id
+        ))
+        
+        mysql.connection.commit()
+        
+        # Fetch the updated location
+        cur.execute("SELECT * FROM locations WHERE location_id = %s", (id,))
+        updated_location = cur.fetchone()
+        return jsonify(updated_location)
+        
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close()
 
 @app.route('/api/warehouses', methods=['GET'])
 def get_warehouses():
     cur = mysql.connection.cursor()
-    # Fixed query to match schema with warehouse_name instead of name
-    cur.execute("""
-        SELECT w.warehouse_id, w.warehouse_name, w.capacity,
-               CONCAT(l.address, ', ', l.city, ', ', l.state) as location,
-               w.current_occupancy as status
-        FROM warehouses w
-        JOIN locations l ON w.location_id = l.location_id
-        ORDER BY w.warehouse_id
-    """)
-    warehouses = cur.fetchall()
-    cur.close()
-    return jsonify(warehouses)
+    try:
+        cur.execute("""
+            SELECT w.*, 
+                   CONCAT(l.city, ', ', l.state) as location,
+                   u.full_name as manager_name
+            FROM warehouses w
+            LEFT JOIN locations l ON w.location_id = l.location_id
+            LEFT JOIN users u ON w.manager_id = u.user_id
+            ORDER BY w.warehouse_id ASC
+        """)
+        warehouses = cur.fetchall()
+        return jsonify(warehouses)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close()
+
+@app.route('/api/warehouses/<int:id>', methods=['GET'])
+def get_warehouse(id):
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("""
+            SELECT w.*, 
+                   CONCAT(l.city, ', ', l.state) as location,
+                   u.full_name as manager_name
+            FROM warehouses w
+            LEFT JOIN locations l ON w.location_id = l.location_id
+            LEFT JOIN users u ON w.manager_id = u.user_id
+            WHERE w.warehouse_id = %s
+        """, (id,))
+        warehouse = cur.fetchone()
+        if not warehouse:
+            return jsonify({'error': 'Warehouse not found'}), 404
+        return jsonify(warehouse)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cur.close()
+
+@app.route('/api/warehouses', methods=['POST'])
+def create_warehouse():
+    cur = mysql.connection.cursor()
+    try:
+        data = request.json
+        
+        # Validate required fields
+        required_fields = ['location_id', 'warehouse_name', 'capacity']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
+        
+        # Check if location is already used by another warehouse
+        cur.execute("SELECT 1 FROM warehouses WHERE location_id = %s", (data['location_id'],))
+        if cur.fetchone():
+            return jsonify({'success': False, 'error': 'Location already has a warehouse'}), 400
+        
+        # Insert warehouse
+        query = """
+            INSERT INTO warehouses 
+            (location_id, warehouse_name, capacity, current_occupancy, manager_id, operating_hours)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        cur.execute(query, (
+            data['location_id'],
+            data['warehouse_name'],
+            data['capacity'],
+            data.get('current_occupancy', 0),
+            data.get('manager_id'),
+            data.get('operating_hours')
+        ))
+        
+        mysql.connection.commit()
+        warehouse_id = cur.lastrowid
+        return jsonify({'success': True, 'warehouse_id': warehouse_id})
+    
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close()
+
+@app.route('/api/warehouses/<int:id>', methods=['PUT'])
+def update_warehouse(id):
+    cur = mysql.connection.cursor()
+    try:
+        data = request.json
+        
+        # Validate warehouse exists
+        cur.execute("SELECT * FROM warehouses WHERE warehouse_id = %s", (id,))
+        if not cur.fetchone():
+            return jsonify({'success': False, 'error': 'Warehouse not found'}), 404
+        
+        # Build update query dynamically based on provided fields
+        update_fields = []
+        params = []
+        
+        fields = {
+            'warehouse_name': 'warehouse_name = %s',
+            'capacity': 'capacity = %s',
+            'current_occupancy': 'current_occupancy = %s',
+            'manager_id': 'manager_id = %s',
+            'operating_hours': 'operating_hours = %s'
+        }
+        
+        for field, sql in fields.items():
+            if field in data:
+                update_fields.append(sql)
+                params.append(data[field])
+        
+        # Add warehouse_id as the last parameter
+        params.append(id)
+        
+        if not update_fields:
+            return jsonify({'success': False, 'error': 'No fields to update'}), 400
+        
+        query = "UPDATE warehouses SET " + ", ".join(update_fields) + " WHERE warehouse_id = %s"
+        cur.execute(query, params)
+        
+        mysql.connection.commit()
+        return jsonify({'success': True})
+    
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close()
+
+@app.route('/api/warehouses/<int:id>', methods=['DELETE'])
+def delete_warehouse(id):
+    cur = mysql.connection.cursor()
+    try:
+        # Check if warehouse exists
+        cur.execute("SELECT * FROM warehouses WHERE warehouse_id = %s", (id,))
+        if not cur.fetchone():
+            return jsonify({'success': False, 'error': 'Warehouse not found'}), 404
+        
+        # Check if warehouse has any shipments
+        cur.execute("SELECT COUNT(*) as count FROM shipments WHERE origin_id IN (SELECT location_id FROM warehouses WHERE warehouse_id = %s) OR destination_id IN (SELECT location_id FROM warehouses WHERE warehouse_id = %s)", (id, id))
+        result = cur.fetchone()
+        if result['count'] > 0:
+            return jsonify({'success': False, 'error': 'Cannot delete warehouse: has associated shipments'}), 400
+        
+        # Delete warehouse
+        cur.execute("DELETE FROM warehouses WHERE warehouse_id = %s", (id,))
+        mysql.connection.commit()
+        return jsonify({'success': True})
+    
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close()
 
 @app.route('/api/routes', methods=['GET'])
 def get_routes():
@@ -1513,7 +1430,6 @@ def create_tracking_event():
             (shipment_id, event_type, location_id, notes, recorded_by)
             VALUES (%s, %s, %s, %s, %s)
         """
-        
         cur.execute(query, (
             data['shipment_id'],
             data['event_type'],
@@ -1718,10 +1634,7 @@ def update_shipment_status(cur, shipment_id, event_type):
     status_mapping = {
         'pickup': 'picked_up',
         'departure': 'in_transit',
-        'arrival': 'in_transit',
-        'delivery': 'delivered',
-        'issue': 'in_transit',  # Or could be 'returned' depending on your business logic
-        'delay': 'in_transit'
+        'delivery': 'delivered'
     }
     
     if event_type in status_mapping:
@@ -1782,46 +1695,29 @@ def get_admin_stats():
         # Get overall statistics
         cur.execute("""
             SELECT 
-                (SELECT COUNT(*) FROM shipments) as total_shipments,
-                (SELECT COUNT(*) FROM shipments WHERE status = 'pending') as pending_shipments,
-                (SELECT COUNT(*) FROM shipments WHERE status = 'in_transit') as in_transit_shipments,
-                (SELECT COUNT(*) FROM shipments WHERE status = 'delivered') as delivered_shipments,
-                (SELECT COUNT(*) FROM customers) as total_customers,
-                (SELECT COUNT(*) FROM drivers) as total_drivers,
-                (SELECT COUNT(*) FROM vehicles) as total_vehicles,
-                (SELECT COUNT(*) FROM vehicles WHERE status = 'available') as available_vehicles
+                (SELECT COUNT(*) FROM shipments) as totalShipments,
+                (SELECT COUNT(*) FROM shipments WHERE status = 'pending') as pending,
+                (SELECT COUNT(*) FROM shipments WHERE status = 'in_transit') as inTransit,
+                (SELECT COUNT(*) FROM shipments WHERE status = 'delivered') as delivered,
+                (SELECT COUNT(*) FROM customers) as customers,
+                (SELECT COUNT(*) FROM drivers) as drivers,
+                (SELECT COUNT(*) FROM vehicles) as vehicles,
+                (SELECT COUNT(*) FROM vehicles WHERE status = 'available') as availableVehicles
         """)
         
         stats = cur.fetchone()
         
-        # Get recent shipments for the dashboard
-        cur.execute("""
-            SELECT s.shipment_id, s.tracking_number, s.status,
-                   DATE_FORMAT(s.created_at, '%Y-%m-%d') as shipment_date,
-                   c.company_name, 
-                   CONCAT(l1.city, ', ', l1.state) as origin,
-                   CONCAT(l2.city, ', ', l2.state) as destination
-            FROM shipments s
-            JOIN customers c ON s.customer_id = c.customer_id
-            JOIN locations l1 ON s.origin_id = l1.location_id
-            JOIN locations l2 ON s.destination_id = l2.location_id
-            ORDER BY s.created_at DESC
-            LIMIT 10
-        """)
-        
-        recent_shipments = cur.fetchall()
-        
         # Get monthly shipment data for charts
         cur.execute("""
             SELECT 
-                DATE_FORMAT(created_at, '%Y-%m') as month,
-                COUNT(*) as count,
+                DATE_FORMAT(created_at, '%b %Y') as month,
+                COUNT(*) as shipment_count,
                 SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
                 SUM(shipment_value) as total_value
             FROM shipments
             WHERE created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
-            GROUP BY DATE_FORMAT(created_at, '%Y-%m')
-            ORDER BY month ASC
+            GROUP BY DATE_FORMAT(created_at, '%b %Y')
+            ORDER BY MIN(created_at) ASC
         """)
         
         monthly_data = cur.fetchall()
@@ -1837,18 +1733,252 @@ def get_admin_stats():
         
         status_distribution = cur.fetchall()
         
+        # Format the response correctly for the frontend
         return jsonify({
-            'success': True,
-            'stats': stats,
-            'recentShipments': recent_shipments,
+            'totalShipments': stats['totalShipments'],
+            'pending': stats['pending'],
+            'inTransit': stats['inTransit'],
+            'delivered': stats['delivered'],
+            'customers': stats['customers'],
+            'drivers': stats['drivers'],
+            'vehicles': stats['vehicles'],
             'monthlyData': monthly_data,
             'statusDistribution': status_distribution
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        print(f"Error in admin stats: {e}")
+        return jsonify({'error': str(e)}), 500
     finally:
         cur.close()
+
+@app.route('/api/customer/stats/<int:customer_id>', methods=['GET'])
+def get_customer_stats(customer_id):
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Get customer info
+        cur.execute("SELECT * FROM customers WHERE customer_id = %s", [customer_id])
+        customer = cur.fetchone()
+        
+        if not customer:
+            return jsonify({'error': 'Customer not found'}), 404
+        
+        # Get basic stats for the customer
+        cur.execute("""
+            SELECT 
+                COUNT(*) as total_shipments,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END) as in_transit,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+                SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned,
+                SUM(shipment_value) as total_value
+            FROM shipments
+            WHERE customer_id = %s
+        """, [customer_id])
+        stats = cur.fetchone()
+        
+        # Get monthly data (last 6 months)
+        cur.execute("""
+            SELECT 
+                DATE_FORMAT(created_at, '%b %Y') as month,
+                COUNT(*) as shipment_count,
+                SUM(shipment_value) as total_value
+            FROM shipments
+            WHERE customer_id = %s
+                AND created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 6 MONTH)
+            GROUP BY DATE_FORMAT(created_at, '%b %Y')
+            ORDER BY MIN(created_at) ASC
+        """, [customer_id])
+        monthly_data = cur.fetchall()
+        
+        # Get recent shipments
+        cur.execute("""
+            SELECT s.*, 
+                   o.city as origin_city, o.state as origin_state,
+                   d.city as destination_city, d.state as destination_state
+            FROM shipments s
+            JOIN locations o ON s.origin_id = o.location_id
+            JOIN locations d ON s.destination_id = d.location_id
+            WHERE s.customer_id = %s
+            ORDER BY s.created_at DESC
+            LIMIT 5
+        """, [customer_id])
+        recent_shipments = cur.fetchall()
+        
+        return jsonify({
+            'stats': stats,
+            'monthlyData': monthly_data,
+            'recentShipments': recent_shipments
+        })
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/driver/stats/<int:driver_id>', methods=['GET'])
+def get_driver_stats(driver_id):
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Get driver info
+        cur.execute("SELECT * FROM drivers WHERE driver_id = %s", [driver_id])
+        driver = cur.fetchone()
+        
+        if not driver:
+            return jsonify({'error': 'Driver not found'}), 404
+        
+        # Get basic stats for the driver
+        cur.execute("""
+            SELECT 
+                COUNT(*) as total_assigned,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END) as in_transit,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+                SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned
+            FROM shipments
+            WHERE driver_id = %s
+        """, [driver_id])
+        basic_stats = cur.fetchone() or {}
+        
+        # Get completion rate
+        cur.execute("""
+            SELECT 
+                COUNT(*) as total_deliveries,
+                SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as completed_deliveries,
+                CASE 
+                    WHEN COUNT(*) > 0 
+                    THEN ROUND((SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 1)
+                    ELSE 0 
+                END as completion_rate
+            FROM shipments
+            WHERE driver_id = %s AND status IN ('delivered', 'returned')
+        """, [driver_id])
+        completion_data = cur.fetchone() or {}
+        
+        # Get average delivery time difference from estimated (in hours)
+        cur.execute("""
+            SELECT 
+                AVG(TIMESTAMPDIFF(HOUR, estimated_delivery, actual_delivery)) as avg_delivery_time_diff
+            FROM shipments
+            WHERE 
+                driver_id = %s AND 
+                status = 'delivered' AND 
+                estimated_delivery IS NOT NULL AND 
+                actual_delivery IS NOT NULL
+        """, [driver_id])
+        time_data = cur.fetchone() or {}
+        
+        # Get active days (days with events in the last 30 days)
+        cur.execute("""
+            SELECT 
+                COUNT(DISTINCT DATE(event_timestamp)) as active_days
+            FROM tracking_events te
+            JOIN shipments s ON te.shipment_id = s.shipment_id
+            WHERE 
+                s.driver_id = %s AND
+                te.event_timestamp >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        """, [driver_id])
+        activity_data = cur.fetchone() or {}
+        
+        # Get recent deliveries
+        cur.execute("""
+            SELECT s.*, 
+                   o.city as origin_city, o.state as origin_state,
+                   d.city as destination_city, d.state as destination_state
+            FROM shipments s
+            JOIN locations o ON s.origin_id = o.location_id
+            JOIN locations d ON s.destination_id = d.location_id
+            WHERE s.driver_id = %s
+            ORDER BY 
+                CASE 
+                    WHEN s.status = 'in_transit' THEN 1
+                    WHEN s.status = 'pending' THEN 2
+                    ELSE 3
+                END,
+                s.created_at DESC
+            LIMIT 5
+        """, [driver_id])
+        recent_deliveries = cur.fetchall() or []
+        
+        # Combine all stats
+        stats = {
+            **basic_stats,
+            'completion_rate': completion_data.get('completion_rate', 0),
+            'avg_delivery_time_diff': time_data.get('avg_delivery_time_diff', 0),
+            'active_days': activity_data.get('active_days', 0)
+        }
+        
+        return jsonify({
+            'stats': stats,
+            'recentDeliveries': recent_deliveries
+        })
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/driver/<int:driver_id>/schedule', methods=['GET'])
+def get_driver_schedule(driver_id):
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Get upcoming schedule for the driver
+        cur.execute("""
+            SELECT 
+                s.*,
+                o.city as origin_city, o.state as origin_state,
+                d.city as destination_city, d.state as destination_state,
+                c.company_name as customer_name
+            FROM 
+                shipments s
+            JOIN 
+                locations o ON s.origin_id = o.location_id
+            JOIN 
+                locations d ON s.destination_id = d.location_id
+            JOIN
+                customers c ON s.customer_id = c.customer_id
+            WHERE 
+                s.driver_id = %s AND 
+                s.status IN ('pending', 'picked_up', 'in_transit')
+            ORDER BY 
+                s.pickup_date ASC, s.estimated_delivery ASC
+        """, [driver_id])
+        schedule = cur.fetchall() or []
+        
+        # Get route waypoints for current shipments
+        waypoints = []
+        for shipment in schedule:
+            if shipment.get('route_id'):
+                cur.execute("""
+                    SELECT 
+                        w.*,
+                        l.city, l.state
+                    FROM 
+                        waypoints w
+                    JOIN
+                        locations l ON w.location_id = l.location_id
+                    WHERE 
+                        w.route_id = %s
+                    ORDER BY 
+                        w.sequence_number
+                """, [shipment['route_id']])
+                shipment_waypoints = cur.fetchall() or []
+                
+                if shipment_waypoints:
+                    waypoints.append({
+                        'shipment_id': shipment['shipment_id'],
+                        'waypoints': shipment_waypoints
+                    })
+        
+        return jsonify({
+            'schedule': schedule,
+            'waypoints': waypoints
+        })
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # Fixed route handler for duplicate /api/ prefixes
 @app.route('/api/api/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
@@ -1865,6 +1995,84 @@ def handle_duplicate_api(subpath):
     
     # Redirect to the correct endpoint
     return redirect(target_url)
+
+@app.route('/api/register', methods=['POST'])
+def register():
+    try:
+        # Extract data from request
+        data = request.json
+        username = data.get('username')
+        password = data.get('password')
+        full_name = data.get('full_name')
+        email = data.get('email')
+        phone = data.get('phone')
+        user_type = data.get('user_type')  # 'customer' or 'driver'
+        
+        # Additional info based on user type
+        company_name = data.get('company_name')  # for customer
+        tax_id = data.get('tax_id')  # for customer
+        
+        license_number = data.get('license_number')  # for driver
+        license_expiry = data.get('license_expiry')  # for driver
+        
+        # Validate required fields
+        if not all([username, password, full_name, email, phone, user_type]):
+            return jsonify({'error': 'Missing required fields'}), 400
+            
+        # Validate user type
+        if user_type not in ['customer', 'driver']:
+            return jsonify({'error': 'Invalid user type. Must be customer or driver'}), 400
+            
+        # Validate type-specific fields
+        if user_type == 'customer' and not company_name:
+            return jsonify({'error': 'Company name is required for customer registration'}), 400
+            
+        if user_type == 'driver' and not all([license_number, license_expiry]):
+            return jsonify({'error': 'License information is required for driver registration'}), 400
+        
+        cur = mysql.connection.cursor()
+        
+        # Check if username or email already exists
+        cur.execute("SELECT * FROM users WHERE username = %s OR email = %s", [username, email])
+        existing_user = cur.fetchone()
+        
+        if existing_user:
+            cur.close()
+            return jsonify({'error': 'Username or email already exists'}), 409
+        
+        # Insert the new user
+        cur.execute("""
+            INSERT INTO users (username, password, full_name, email, phone, user_type) 
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, [username, password, full_name, email, phone, user_type])
+        
+        # Get the new user_id
+        user_id = cur.lastrowid
+        
+        # Create customer or driver record
+        if user_type == 'customer':
+            cur.execute("""
+                INSERT INTO customers (user_id, company_name, tax_id)
+                VALUES (%s, %s, %s)
+            """, [user_id, company_name, tax_id])
+        elif user_type == 'driver':
+            cur.execute("""
+                INSERT INTO drivers (user_id, license_number, license_expiry)
+                VALUES (%s, %s, %s)
+            """, [user_id, license_number, license_expiry])
+        
+        mysql.connection.commit()
+        cur.close()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Registration successful',
+            'user_id': user_id
+        }), 201
+        
+    except Exception as e:
+        print(f"Registration error: {e}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

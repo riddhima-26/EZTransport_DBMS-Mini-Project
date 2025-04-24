@@ -32,7 +32,7 @@ const AdminDashboard = () => {
         
         // Get dashboard statistics from the complex stored procedure
         try {
-          const statsResponse = await api.get('/admin/stats');
+          const statsResponse = await api.get('/api/admin/stats');
           
           if (statsResponse.data) {
             setStats({
@@ -60,7 +60,7 @@ const AdminDashboard = () => {
         
         // Get recent shipments
         try {
-          const shipmentsResponse = await api.get('/shipments');
+          const shipmentsResponse = await api.get('/api/shipments');
           setRecentShipments(Array.isArray(shipmentsResponse.data) 
             ? shipmentsResponse.data.slice(0, 10) // Only take the 10 most recent
             : []);

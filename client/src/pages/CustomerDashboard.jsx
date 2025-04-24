@@ -40,34 +40,48 @@ const CustomerDashboard = () => {
         
         // Find customer_id based on user_id
         try {
-          const customersResponse = await api.get('/api/customers');
-          const customerInfo = customersResponse.data.find(customer => customer.user_id === parseInt(user.id));
+          console.log("Fetching customer info for user ID:", user.id);
+          const customersResponse = await api.get('/customers');
+          console.log("Customers response:", customersResponse.data);
+          
+          // Convert user.id to integer for proper comparison
+          const userIdInt = parseInt(user.id);
+          const customerInfo = Array.isArray(customersResponse.data) 
+            ? customersResponse.data.find(customer => customer.user_id === userIdInt)
+            : null;
           
           if (!customerInfo) {
+            console.error("No customer record found for user ID:", user.id);
             setError('Customer information not found');
             setLoading(false);
             return;
           }
           
-          // Using the new endpoint to get customer stats
-          const statsResponse = await api.get(`/api/customer/stats/${customerInfo.customer_id}`);
+          console.log("Found customer:", customerInfo);
           
-          if (statsResponse?.data) {
+          // Using the customer stats endpoint - remove /api prefix
+          const statsResponse = await api.get(`/customer/stats/${customerInfo.customer_id}`);
+          
+          if (statsResponse?.data?.success) {
+            console.log("Customer stats:", statsResponse.data);
             const data = statsResponse.data;
             
             // Format data for the component
             setStats({
               basicStats: {
                 total_shipments: data.stats?.total_shipments || 0,
-                pending_shipments: data.stats?.pending || 0,
-                transit_shipments: data.stats?.in_transit || 0,
-                delivered_shipments: data.stats?.delivered || 0,
-                returned_shipments: data.stats?.returned || 0,
-                total_value: data.stats?.total_value || 0
+                pending_shipments: data.stats?.pending_shipments || 0,
+                transit_shipments: data.stats?.active_shipments || 0,
+                delivered_shipments: data.stats?.delivered_shipments || 0,
+                returned_shipments: data.stats?.returned_shipments || 0,
+                total_value: data.stats?.total_value_shipped || 0
               },
               monthlyData: data.monthlyData || [],
+              topRoutes: data.topRoutes || [],
               recentShipments: data.recentShipments || []
             });
+          } else {
+            throw new Error("Invalid response from stats API");
           }
         } catch (statsError) {
           console.error('Error fetching customer stats:', statsError);
@@ -75,12 +89,13 @@ const CustomerDashboard = () => {
           
           // Fallback to basic shipment data
           try {
-            // Using the modified shipments endpoint that respects user roles
-            const shipmentsResponse = await api.get('/api/shipments', {
+            // Using the shipments endpoint with filtering - remove /api prefix
+            const shipmentsResponse = await api.get('/shipments', {
               params: { user_id: user.id, user_type: 'customer' }
             });
             
             const customerShipments = shipmentsResponse.data || [];
+            console.log("Fallback shipments:", customerShipments);
             
             setStats({
               basicStats: {
@@ -92,6 +107,7 @@ const CustomerDashboard = () => {
                 total_value: 0
               },
               monthlyData: [],
+              topRoutes: [],
               recentShipments: customerShipments
                 .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
                 .slice(0, 5)
@@ -365,7 +381,7 @@ const CustomerDashboard = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-500">
-                        {new Date(shipment.created_at).toLocaleDateString()}
+                        {new Date(shipment.created_at || shipment.pickup_date).toLocaleDateString()}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
