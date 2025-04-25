@@ -845,57 +845,39 @@ def update_customer(id):
     cur = mysql.connection.cursor()
     try:
         data = request.get_json()
-        
-        # First get the user_id
-        cur.execute("SELECT user_id FROM customers WHERE customer_id = %s", (id,))
-        customer = cur.fetchone()
-        if not customer:
-            return jsonify({'success': False, 'error': 'Customer not found'}), 404
-            
-        user_id = customer['user_id']
-        
-        # Update the user
+
+        # Validate required fields
+        required_fields = ['full_name', 'email', 'phone']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({'error': f'{field} is required'}), 400
+
+        # Update customer information
         cur.execute("""
-            UPDATE users 
-            SET full_name = %s, email = %s, phone = %s
-            WHERE user_id = %s
+            UPDATE customers c
+            JOIN users u ON c.user_id = u.user_id
+            SET u.full_name = %s,
+                u.email = %s,
+                u.phone = %s,
+                c.company_name = %s,
+                c.tax_id = %s
+            WHERE c.customer_id = %s
         """, (
             data['full_name'],
             data['email'],
             data['phone'],
-            user_id
-        ))
-        
-        # Update the customer
-        cur.execute("""
-            UPDATE customers 
-            SET company_name = %s, tax_id = %s, credit_limit = %s
-            WHERE customer_id = %s
-        """, (
-            data['company_name'],
-            data['tax_id'],
-            data['credit_limit'],
+            data.get('company_name', None),
+            data.get('tax_id', None),
             id
         ))
-        
+
         mysql.connection.commit()
-        
-        # Fetch the updated customer
-        cur.execute("""
-            SELECT c.customer_id, u.full_name, c.company_name,
-                   c.tax_id, c.credit_limit, c.payment_terms,
-                   u.email, u.phone
-            FROM customers c
-            JOIN users u ON c.user_id = u.user_id
-            WHERE c.customer_id = %s
-        """, (id,))
-        
-        updated_customer = cur.fetchone()
-        return jsonify(updated_customer)
-        
+        return jsonify({'success': True, 'message': 'Customer updated successfully'})
+
     except Exception as e:
         mysql.connection.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'error': str(e)}), 500
+
     finally:
         cur.close()
 
@@ -2179,6 +2161,8 @@ def register():
         user_id = cur.lastrowid
         
         # Create customer or driver record
+        if user```python
+        # Create customer or driver record
         if user_type == 'customer':
             cur.execute("""
                 INSERT INTO customers (user_id, company_name, tax_id)
@@ -2271,8 +2255,6 @@ def get_customer_dashboard(user_id):
     except Exception as e:
         print(f"Error in get_customer_dashboard: {e}")
         return jsonify({'error': str(e)}), 500
-
-
 
 @app.route('/api/driver-dashboard/<int:user_id>', methods=['GET'])
 def get_driver_dashboard(user_id):
@@ -2377,9 +2359,7 @@ def get_driver_dashboard(user_id):
     except Exception as e:
         print(f"Error in get_driver_dashboard: {e}")
         return jsonify({'error': str(e)}), 500
-    
-    
-    
+
 @app.route('/api/new/customer-dashboard/<int:user_id>', methods=['GET'])
 def new_customer_dashboard(user_id):
     try:
@@ -2430,3 +2410,4 @@ def new_driver_dashboard(user_id):
 
 if __name__ == '__main__':
     app.run(debug=True)
+```

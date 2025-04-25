@@ -246,8 +246,8 @@ const Tracking = () => {
                   />
                   <span className="ml-2">Shipment ID</span>
                 </label>
-                <label className="inline-flex items-center">
-                  <input
+               {/*} <label className="inline-flex items-center">
+                 <input
                     type="radio"
                     className="form-radio text-blue-600"
                     name="searchMode"
@@ -255,7 +255,7 @@ const Tracking = () => {
                     onChange={() => setSearchMode('tracking')}
                   />
                   <span className="ml-2">Tracking Number</span>
-                </label>
+                </label> */}
               </div>
             </div>
           </div>
@@ -439,7 +439,7 @@ const Tracking = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Location</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Timestamp</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Notes</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Actions</th>
+               {/* <th className="px-6 py-3 text-left text-xs font-medium text-purple-800 uppercase tracking-wider">Actions</th> */}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -491,7 +491,7 @@ const Tracking = () => {
                       <span className="text-gray-400">-</span>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+              {/*    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <button 
                       onClick={() => handleEdit(event)}
                       className="text-purple-600 hover:text-purple-900 mr-3"
@@ -504,7 +504,7 @@ const Tracking = () => {
                     >
                       <i className="fas fa-trash"></i>
                     </button>
-                  </td>
+                  </td>  */}
                 </tr>
               ))}
             </tbody>
