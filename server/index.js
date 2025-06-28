@@ -3,9 +3,13 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
+const cors = require('cors');
+const express = require('express');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+
 
 // For demo purposes, we'll use a hardcoded user
 const DEMO_USER = {
